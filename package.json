@@ -1,0 +1,30 @@
+{
+  "name": "pygem",
+  "version": "2.0.0",
+  "description": "Reescrita didática de arquivos Markdown usando Gemini no Vertex AI.",
+  "main": "src/app-md.js",
+  "scripts": {
+    "start": "node src/app-md.js",
+    "launcher": "node src/launcher.js",
+    "start:optimized": "node src/app-md.js --optimized",
+    "test:mermaid": "node test-mermaid-validation.js",
+    "test:core": "node test-pygem-core.js"
+  },
+  "dependencies": {
+    "@google/genai": "^2.12.0",
+    "dotenv": "^16.0.0",
+    "readline-sync": "^1.4.10"
+  },
+  "keywords": [
+    "vertex-ai",
+    "gemini",
+    "markdown",
+    "pygem",
+    "rewriter"
+  ],
+  "author": "PRO Concursos",
+  "engines": {
+    "node": ">=20.0.0"
+  },
+  "license": "MIT"
+}

@@ -1,0 +1,45 @@
+ÍNDICE
+
+- AUDITORIA INTERNA (NBC TI 01)
+  - Características e Funções Essenciais
+  - Tipos de Testes Realizados
+  - Relatório de Auditoria Interna
+- DIFERENÇAS ENTRE AUDITORIA INTERNA E EXTERNA
+- REQUISITOS PARA O EXERCÍCIO DA AUDITORIA (PRINCÍPIOS ÉTICOS)
+  - Obrigatoriedade das Normas
+- OBJETIVOS GERAIS DO AUDITOR INDEPENDENTE
+- INDEPENDÊNCIA
+  - Ameaças à Independência
+- ROTAÇÃO DOS RESPONSÁVEIS TÉCNICOS (RT)
+- ROTAÇÃO DA FIRMA DE AUDITORIA (INSTRUÇÃO CVM Nº 308)
+- RESPONSABILIDADE DO AUDITOR E DA ADMINISTRAÇÃO
+  - Responsabilidade do Auditor
+  - Responsabilidade da Administração
+- CONCORDÂNCIA COM OS TERMOS (NBC TA 210)
+  - Condições Prévias para a Auditoria
+  - Entendimento Comum sobre os Termos
+  - Representação Formal (Carta de Responsabilidade da Administração)
+- SUPERVISÃO E CONTROLE DE QUALIDADE DA AUDITORIA DAS DCs
+  - Revisão do Controle de Qualidade
+  - Sistema de Controle de Qualidade
+  - Definições Importantes
+- REVISÕES (NÃO CONFUNDIR COM REVISÃO DO CONTROLE DE QUALIDADE)
+  - Processo em Caso de Divergência
+- MATERIALIDADE E RELEVÂNCIA
+  - Materialidade
+  - Relevância
+- PLANEJAMENTO DA AUDITORIA (NBC TA 300)
+  - Fluxo do Planejamento
+  - Etapas do Planejamento
+- PLANEJAMENTO DA AUDITORIA INICIAL (PRIMEIRA AUDITORIA)
+- CONTROLES INTERNOS
+- PRINCÍPIOS DE CONTROLE INTERNO (DOUTINA)
+- COMUNICAÇÃO DE DEFICIÊNCIAS DO CONTROLE INTERNO (NBC TA 265)
+  - Deficiência Significativa de Controle Interno
+- ERRO E FRAUDE (NBC TA 240 / TI 01)
+  - Erro
+  - Fraude
+  - Fatores de Risco de Fraude (FRF)
+  - Resposta aos Riscos de Fraude
+  - Comunicação da Fraude
+  - Não Conformidades
