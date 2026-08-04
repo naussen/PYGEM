@@ -89,3 +89,6 @@ test-md-html/
 
 # Arquivos específicos do projeto que não devem ser versionados
 deprecated/
+
+# Saídas de processamento
+**/*_reescrito.md
