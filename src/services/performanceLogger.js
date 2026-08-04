@@ -17,6 +17,11 @@ class PerformanceLogger {
             totalTokens: 0,
             totalBlocks: 0,
             apiRequests: 0,
+            apiErrors: 0,
+            validationFailures: 0,
+            truncatedResponses: 0,
+            retries: 0,
+            continuations: 0,
             totalProcessingTime: 0,
             totalDelayTime: 0,
             averageFileTime: 0,
@@ -49,6 +54,8 @@ class PerformanceLogger {
             config: {
                 delays: config.delays,
                 model: config.model,
+                maxOutputTokens: config.generationConfig.maxOutputTokens,
+                thinkingBudget: config.generationConfig.thinkingConfig?.thinkingBudget ?? null,
                 authentication: 'ADC',
                 project: config.project,
                 location: config.location
@@ -68,7 +75,9 @@ class PerformanceLogger {
             startTimeISO: new Date().toISOString(),
             blocks: [],
             apiCalls: [],
-            processingMode: estimatedTokens > 5000 ? 'blocks' : 'single'
+            processingMode: estimatedTokens > config.processing.singlePassMaxInputTokens
+                ? 'blocks'
+                : 'single'
         };
         
         this.stats.totalFiles++;
@@ -114,7 +123,23 @@ class PerformanceLogger {
         }
     }
 
-    logApiCall(endpoint, model, inputTokens, outputTokens, duration, success, errorMessage = null) {
+    logApiCall({
+        endpoint,
+        model,
+        inputTokens,
+        outputTokens,
+        duration,
+        success,
+        errorMessage = null,
+        attempt = null,
+        continuation = 0,
+        finishReason = null,
+        promptTokenCount = null,
+        candidatesTokenCount = null,
+        thoughtsTokenCount = null,
+        totalTokenCount = null,
+        outputLength = 0,
+    }) {
         const apiCall = {
             timestamp: Date.now(),
             timestampISO: new Date().toISOString(),
@@ -125,6 +150,16 @@ class PerformanceLogger {
             duration,
             success,
             errorMessage,
+            attempt,
+            continuation,
+            finishReason,
+            usageMetadata: {
+                promptTokenCount,
+                candidatesTokenCount,
+                thoughtsTokenCount,
+                totalTokenCount,
+            },
+            outputLength,
             tokensPerSecond: duration > 0 ? ((inputTokens + outputTokens) / (duration / 1000)) : 0
         };
         
@@ -134,8 +169,22 @@ class PerformanceLogger {
         }
         
         this.stats.apiRequests++;
+        if (!success) this.stats.apiErrors++;
         
         console.log(`📊 [${this.sessionId}] API Call: ${model} (${inputTokens}+${outputTokens} tokens, ${duration}ms, ${apiCall.tokensPerSecond.toFixed(2)} tokens/s)`);
+    }
+
+    recordGenerationEvent(type) {
+        const supportedEvents = new Set([
+            'validationFailures',
+            'truncatedResponses',
+            'retries',
+            'continuations',
+        ]);
+
+        if (supportedEvents.has(type)) {
+            this.stats[type]++;
+        }
     }
 
     recordDelay(milliseconds, type = 'unknown') {
@@ -162,7 +211,9 @@ class PerformanceLogger {
             startTimeISO: null,
             blocks: [],
             apiCalls: [],
-            processingMode: normalizedTokens > 5000 ? 'blocks' : 'single',
+            processingMode: normalizedTokens > config.processing.singlePassMaxInputTokens
+                ? 'blocks'
+                : 'single',
             endTime: null,
             endTimeISO: null,
             duration: normalizedDuration,
@@ -343,17 +394,41 @@ class PerformanceLogger {
             });
         }
         
-        // Recomendações baseadas em falhas
-        if (this.stats.failedFiles > 0) {
+        if (this.stats.apiErrors > 0) {
             recommendations.push({
-                category: 'reliability',
-                priority: 'medium',
-                title: 'Melhorar taxa de sucesso',
-                description: `${this.stats.failedFiles} arquivos falharam`,
+                category: 'vertex-api',
+                priority: 'high',
+                title: 'Investigar falhas da API Vertex AI',
+                description: `${this.stats.apiErrors} requisições falharam na comunicação com o Vertex AI`,
                 actions: [
                     'Revisar as cotas e os limites do projeto Vertex AI',
                     'Validar autenticação ADC e permissões IAM',
-                    'Verificar e ajustar configurações de segurança'
+                    'Correlacionar status HTTP e mensagens registradas nas chamadas'
+                ]
+            });
+        }
+
+        if (this.stats.validationFailures > 0 || this.stats.truncatedResponses > 0) {
+            recommendations.push({
+                category: 'output-reliability',
+                priority: 'high',
+                title: 'Melhorar estabilidade da saída gerada',
+                description: `${this.stats.validationFailures} rejeições locais e ${this.stats.truncatedResponses} respostas truncadas`,
+                actions: [
+                    'Revisar finishReason, comprimento e motivo de validação nos logs',
+                    'Ajustar orçamento de saída ou divisão em blocos quando houver MAX_TOKENS',
+                    'Reprocessar somente os arquivos que falharam'
+                ]
+            });
+        } else if (this.stats.failedFiles > 0 && this.stats.apiErrors === 0) {
+            recommendations.push({
+                category: 'file-processing',
+                priority: 'medium',
+                title: 'Investigar falhas locais de processamento',
+                description: `${this.stats.failedFiles} arquivos falharam sem erro identificado da API`,
+                actions: [
+                    'Revisar validação, leitura e gravação dos arquivos afetados',
+                    'Consultar a mensagem detalhada de cada arquivo no relatório'
                 ]
             });
         }
@@ -413,6 +488,9 @@ class PerformanceLogger {
         console.log('\n📊 RESUMO DE PERFORMANCE:');
         console.log(`⏱️  Tempo total de processamento: ${this.formatDuration(this.stats.totalProcessingTime)}`);
         console.log(`📄 Arquivos processados: ${this.stats.processedFiles}/${this.stats.totalFiles}`);
+        console.log(`☁️  Erros reais da API: ${this.stats.apiErrors}`);
+        console.log(`⚠️  Rejeições locais: ${this.stats.validationFailures}`);
+        console.log(`✂️  Respostas truncadas: ${this.stats.truncatedResponses}`);
         console.log(`🔢 Total de tokens: ${this.stats.totalTokens.toLocaleString()}`);
         console.log(`⚡ Velocidade média: ${this.stats.averageTokensPerSecond.toFixed(2)} tokens/segundo`);
         console.log(`📊 Tempo médio por arquivo: ${this.formatDuration(this.stats.averageFileTime)}`);

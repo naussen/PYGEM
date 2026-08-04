@@ -22,6 +22,12 @@ const config = {
         maxOutputTokens: 65536,
         candidateCount: 1,
         stopSequences: [],
+        // Reescrita é uma tarefa transformacional. Um orçamento dinâmico de
+        // thinking pode consumir o limite antes de o Markdown ser concluído.
+        thinkingConfig: {
+            thinkingBudget: getPositiveNumberEnv('PYGEM_THINKING_BUDGET', 0, { integer: true }),
+            includeThoughts: false,
+        },
     },
     outputPolicy: {
         maxOutputRatio: getPositiveNumberEnv('PYGEM_MAX_OUTPUT_RATIO', 3, { minimum: 1 }),
@@ -32,6 +38,13 @@ const config = {
         maxFileRetries: getPositiveNumberEnv('PYGEM_MAX_FILE_RETRIES', 2, { integer: true }),
         maxGenerationAttempts: getPositiveNumberEnv('PYGEM_MAX_GENERATION_ATTEMPTS', 3, { integer: true, minimum: 1 }),
         maxContinuationCount: getPositiveNumberEnv('PYGEM_MAX_CONTINUATIONS', 2, { integer: true }),
+        continuationMinInputTokens: getPositiveNumberEnv('PYGEM_CONTINUATION_MIN_INPUT_TOKENS', 5000, { integer: true, minimum: 1 }),
+    },
+    processing: {
+        singlePassMaxInputTokens: getPositiveNumberEnv('PYGEM_SINGLE_PASS_MAX_INPUT_TOKENS', 2200, { integer: true, minimum: 500 }),
+        blockInputTokens: getPositiveNumberEnv('PYGEM_BLOCK_INPUT_TOKENS', 1800, { integer: true, minimum: 500 }),
+        minRecoveryBlockTokens: getPositiveNumberEnv('PYGEM_MIN_RECOVERY_BLOCK_TOKENS', 600, { integer: true, minimum: 250 }),
+        maxBlockSubdivisionDepth: getPositiveNumberEnv('PYGEM_MAX_BLOCK_SUBDIVISION_DEPTH', 1, { integer: true }),
     },
     safetySettings: [
         { category: 'HARM_CATEGORY_HARASSMENT', threshold: 'BLOCK_ONLY_HIGH' },

@@ -92,7 +92,15 @@ Os arquivos originais são preservados, salvo quando uma opção explícita de s
 | `PYGEM_MIN_OUTPUT_TOKENS` | Piso do limite de tokens por resposta | `2048` |
 | `PYGEM_MAX_FILE_RETRIES` | Tentativas adicionais para erros transitórios por arquivo | `2` |
 | `PYGEM_MAX_GENERATION_ATTEMPTS` | Tentativas de validação da resposta do modelo | `3` |
-| `PYGEM_MAX_CONTINUATIONS` | Continuações permitidas quando a resposta atingir `MAX_TOKENS` | `2` |
+| `PYGEM_MAX_CONTINUATIONS` | Continuações permitidas somente em fluxos longos que as habilitem explicitamente | `2` |
+| `PYGEM_CONTINUATION_MIN_INPUT_TOKENS` | Tamanho mínimo da entrada para permitir continuação explícita | `5000` |
+| `PYGEM_THINKING_BUDGET` | Orçamento de thinking na reescrita; `0` desabilita | `0` |
+
+## Saídas individuais e execuções incompletas
+
+Cada arquivo de origem produz exatamente um arquivo Markdown independente com o sufixo `_reescrito.md`. A estrutura relativa das subpastas é preservada na saída: por exemplo, `entrada\direito\005.md` gera `saída\direito\005_reescrito.md`. Isso também impede colisões quando subpastas diferentes possuem arquivos com o mesmo nome.
+
+Cada resultado só é publicado depois de validado e por meio de gravação atômica. Se um item do lote falhar, os demais arquivos concluídos permanecem disponíveis e não são reunidos em um agregado parcial. O arquivo `_pygem.manifest.json` de cada diretório registra `status: "complete"` ou `status: "incomplete"`, as saídas publicadas e os arquivos que precisam ser reprocessados.
 
 ## Validação editorial da saída
 

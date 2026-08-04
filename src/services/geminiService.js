@@ -10,10 +10,29 @@ const {
     extractFinishReason,
     getBlockPrompt,
 } = require('../utils/contentPreprocessor');
-const { validateGeneratedContent } = require('../utils/validation');
+const {
+    validateGeneratedContent,
+    validateSourceHeadingCoverage,
+    assertSourceHeadingCoverage,
+} = require('../utils/validation');
 let genAI = null;
-let requestCount = 0;
-let errorCount = 0;
+const apiStats = {
+    requests: 0,
+    apiErrors: 0,
+    validationFailures: 0,
+    truncatedResponses: 0,
+    retries: 0,
+    continuations: 0,
+};
+
+const GENERATION_FAILURE = Object.freeze({
+    EMPTY: 'empty',
+    MAX_TOKENS: 'max_tokens',
+    TOO_SHORT: 'too_short',
+    TOO_LONG: 'too_long',
+    THINKING_LEAK: 'thinking_leak',
+    INVALID_STRUCTURE: 'invalid_structure',
+});
 
 /**
  * Reinicializa o cliente da API do Gemini para evitar conflitos entre documentos
@@ -67,13 +86,17 @@ const getGenerativeModel = ({ model, generationConfig, safetySettings }) => ({
  */
 const getApiStats = () => {
     return {
-        requests: requestCount,
-        errors: errorCount,
+        ...apiStats,
+        // Mantido temporariamente para consumidores antigos; agora representa
+        // somente falhas reais de comunicação com a API.
+        errors: apiStats.apiErrors,
         authentication: 'ADC',
         project: config.project,
         location: config.location,
         model: config.model,
-        successRate: requestCount > 0 ? ((requestCount - errorCount) / requestCount * 100).toFixed(2) + '%' : '0%'
+        successRate: apiStats.requests > 0
+            ? ((apiStats.requests - apiStats.apiErrors) / apiStats.requests * 100).toFixed(2) + '%'
+            : '0%'
     };
 };
 
@@ -84,20 +107,19 @@ function buildGenerationConfig(overrides = {}) {
     };
 }
 
-function createModel(overrides = {}) {
-    const currentModel = config.model;
+function createModel(overrides = {}, modelName = config.model) {
     return {
         model: getGenerativeModel({
-            model: currentModel,
+            model: modelName,
             generationConfig: buildGenerationConfig(overrides),
             safetySettings: config.safetySettings,
         }),
-        modelName: currentModel,
+        modelName,
     };
 }
 
-async function generateRewriteOnce(model, fullPrompt) {
-    requestCount++;
+async function generateRewriteOnce(model, modelName, fullPrompt, context = {}) {
+    apiStats.requests++;
     const startedAt = Date.now();
     const inputTokens = estimateTokens(fullPrompt);
 
@@ -106,30 +128,130 @@ async function generateRewriteOnce(model, fullPrompt) {
         const response = await result.response;
         const finishReason = extractFinishReason(response);
         const text = sanitizeModelOutput(response.text());
+        const usageMetadata = response.usageMetadata || {};
         const duration = Date.now() - startedAt;
 
-        global.performanceLogger?.logApiCall(
-            'models.generateContent',
-            config.model,
+        global.performanceLogger?.logApiCall({
+            endpoint: 'models.generateContent',
+            model: modelName,
             inputTokens,
-            estimateTokens(text),
+            outputTokens: estimateTokens(text),
             duration,
-            true
-        );
+            success: true,
+            attempt: context.attempt,
+            continuation: context.continuation || 0,
+            finishReason,
+            promptTokenCount: usageMetadata.promptTokenCount ?? null,
+            candidatesTokenCount: usageMetadata.candidatesTokenCount ?? null,
+            thoughtsTokenCount: usageMetadata.thoughtsTokenCount ?? null,
+            totalTokenCount: usageMetadata.totalTokenCount ?? null,
+            outputLength: text.length,
+        });
 
-        return { text, finishReason };
+        return { text, finishReason, usageMetadata };
     } catch (error) {
-        global.performanceLogger?.logApiCall(
-            'models.generateContent',
-            config.model,
+        apiStats.apiErrors++;
+        global.performanceLogger?.logApiCall({
+            endpoint: 'models.generateContent',
+            model: modelName,
             inputTokens,
-            0,
-            Date.now() - startedAt,
-            false,
-            error.message
-        );
+            outputTokens: 0,
+            duration: Date.now() - startedAt,
+            success: false,
+            errorMessage: error.message,
+            attempt: context.attempt,
+            continuation: context.continuation || 0,
+        });
         throw error;
     }
+}
+
+function calculateMaxOutputTokens(content, maxRatio = config.outputPolicy.maxOutputRatio) {
+    const proportionalBudget = Math.ceil(
+        estimateTokens(content) * maxRatio * config.outputPolicy.maxOutputTokenMultiplier
+    );
+
+    return Math.min(
+        config.generationConfig.maxOutputTokens,
+        Math.max(config.outputPolicy.minOutputTokens, proportionalBudget)
+    );
+}
+
+function getRetryInstruction(failure) {
+    switch (failure?.reason) {
+        case GENERATION_FAILURE.MAX_TOKENS:
+            return 'A tentativa anterior foi truncada. Produza uma versão completa e concisa em uma única resposta, sem planejamento ou raciocínio interno.';
+        case GENERATION_FAILURE.TOO_SHORT:
+        case GENERATION_FAILURE.EMPTY:
+            return 'A tentativa anterior omitiu conteúdo. Preserve todos os conceitos, valores, exemplos e exceções presentes no texto fornecido.';
+        case GENERATION_FAILURE.TOO_LONG:
+            return 'A tentativa anterior expandiu excessivamente o material. Não acrescente conteúdo externo, não repita informações e use recursos didáticos apenas quando indispensáveis.';
+        case GENERATION_FAILURE.THINKING_LEAK:
+            return 'Entregue exclusivamente o Markdown final, sem planejamento, análise interna ou comentários sobre o processo de reescrita.';
+        case GENERATION_FAILURE.INVALID_STRUCTURE:
+            return `A tentativa anterior apresentou estrutura Markdown inválida. Corrija especificamente: ${failure.details}`;
+        default:
+            return '';
+    }
+}
+
+function buildAttemptPrompt(prompt, content, lastFailure) {
+    const retryInstruction = getRetryInstruction(lastFailure);
+    return [
+        prompt,
+        retryInstruction ? `## CORREÇÃO DA NOVA TENTATIVA\n${retryInstruction}` : '',
+        content,
+    ].filter(Boolean).join('\n\n');
+}
+
+function shouldRewriteInBlocks(contentOrTokens) {
+    const tokens = typeof contentOrTokens === 'number'
+        ? contentOrTokens
+        : estimateTokens(contentOrTokens);
+    return tokens > config.processing.singlePassMaxInputTokens;
+}
+
+function getRecoverySubdivision(block, error, depth = 0) {
+    const recoverableReasons = new Set([
+        GENERATION_FAILURE.MAX_TOKENS,
+        GENERATION_FAILURE.TOO_LONG,
+    ]);
+    const blockTokens = estimateTokens(block);
+
+    if (
+        error?.code !== 'PYGEM_OUTPUT_INVALID'
+        || !recoverableReasons.has(error?.details?.reason)
+        || depth >= config.processing.maxBlockSubdivisionDepth
+        || blockTokens <= config.processing.minRecoveryBlockTokens
+    ) {
+        return null;
+    }
+
+    const recoveryLimit = Math.max(
+        config.processing.minRecoveryBlockTokens,
+        Math.floor(blockTokens / 2)
+    );
+    const fragments = splitContentIntoBlocks(block, recoveryLimit);
+    if (fragments.length > 1) {
+        const lastIndex = fragments.length - 1;
+        const tailTokens = estimateTokens(fragments[lastIndex]);
+        const mergedTail = `${fragments[lastIndex - 1]}\n\n${fragments[lastIndex]}`;
+        if (
+            tailTokens < config.processing.minRecoveryBlockTokens
+            && estimateTokens(mergedTail) <= recoveryLimit * 1.2
+        ) {
+            fragments.splice(lastIndex - 1, 2, mergedTail);
+        }
+    }
+    return fragments.length > 1 ? fragments : null;
+}
+
+async function waitForValidationRetry(attempt, maxAttempts, delaySeconds) {
+    if (attempt >= maxAttempts) return;
+    apiStats.retries++;
+    global.performanceLogger?.recordGenerationEvent('retries');
+    global.performanceLogger?.recordDelay(delaySeconds * 1000, 'validation');
+    await sleep(delaySeconds);
 }
 
 async function generateValidatedRewrite(content, prompt, options = {}) {
@@ -137,87 +259,194 @@ async function generateValidatedRewrite(content, prompt, options = {}) {
     const minRatio = options.minOutputRatio ?? 0.75;
     const maxRatio = options.maxOutputRatio ?? config.outputPolicy.maxOutputRatio;
     const label = options.label ?? 'conteúdo';
-    const maxContinuationCount = config.retry.maxContinuationCount;
-    const maxOutputTokens = Math.min(
-        config.generationConfig.maxOutputTokens,
-        Math.max(
-            config.outputPolicy.minOutputTokens,
-            Math.ceil(estimateTokens(content) * maxRatio * config.outputPolicy.maxOutputTokenMultiplier)
-        )
-    );
+    const allowContinuation = options.allowContinuation === true
+        && estimateTokens(content) >= config.retry.continuationMinInputTokens;
+    const maxContinuationCount = allowContinuation ? config.retry.maxContinuationCount : 0;
+    const maxOutputTokens = calculateMaxOutputTokens(content, maxRatio);
+    let lastFailure = null;
+    let fallbackActivated = false;
 
     for (let attempt = 1; attempt <= maxAttempts; attempt++) {
-        const { model, modelName } = createModel({
+        if (attempt > 1 && [
+            GENERATION_FAILURE.MAX_TOKENS,
+            GENERATION_FAILURE.TOO_LONG,
+        ].includes(lastFailure?.reason)) {
+            fallbackActivated = true;
+        }
+        const modelName = fallbackActivated
+            ? config.fallbackModel
+            : config.model;
+        const { model } = createModel({
             maxOutputTokens,
             ...(attempt > 1 ? { temperature: 0.2 } : {}),
-        });
+        }, modelName);
 
         let accumulated = '';
         let continuationCount = 0;
-        let promptToSend = `${prompt}\n\n${content}`;
+        let promptToSend = buildAttemptPrompt(prompt, content, lastFailure);
+        let lastUsageMetadata = {};
 
         while (continuationCount <= maxContinuationCount) {
-            console.log(`Usando modelo: ${modelName} (${label}, tentativa ${attempt}${continuationCount ? `, continuação ${continuationCount + 1}` : ''})`);
+            console.log(`Usando modelo: ${modelName} (${label}, tentativa ${attempt}${continuationCount ? `, continuação ${continuationCount}` : ''})`);
 
-            const { text, finishReason } = await generateRewriteOnce(model, promptToSend);
+            const result = await generateRewriteOnce(model, modelName, promptToSend, {
+                attempt,
+                continuation: continuationCount,
+            });
+            const { text, finishReason, usageMetadata } = result;
+            lastUsageMetadata = usageMetadata;
             accumulated = accumulated ? `${accumulated}\n\n${text}` : text;
 
             if (isOutputTooLong(content, accumulated, maxRatio)) {
-                console.log(`  ⚠️ Saída excessiva em ${label}; descartando tentativa.`);
-                logger.warn(`Saída excessiva em ${label}: ${accumulated.length}/${content.length} caracteres.`);
+                lastFailure = {
+                    reason: GENERATION_FAILURE.TOO_LONG,
+                    attempt,
+                    finishReason,
+                    originalLength: content.length,
+                    outputLength: accumulated.length,
+                    usageMetadata: lastUsageMetadata,
+                };
+                console.log(`  ⚠️ Saída excessiva em ${label}; descartando a tentativa integral.`);
                 break;
             }
 
-            if (finishReason === 'MAX_TOKENS' && continuationCount < maxContinuationCount) {
-                console.log('  ⚠️ Resposta truncada (MAX_TOKENS), solicitando continuação...');
-                promptToSend = `${prompt}\n\nContinue a reescrita EXATAMENTE de onde parou. Não repita trechos já escritos. Entregue SOMENTE o markdown reescrito restante em português.\n\n--- JÁ REESCRITO (final) ---\n${accumulated.slice(-2500)}\n\n--- CONTEÚDO ORIGINAL COMPLETO (referência) ---\n${content}`;
-                continuationCount++;
-                continue;
+            if (finishReason === 'MAX_TOKENS') {
+                apiStats.truncatedResponses++;
+                global.performanceLogger?.recordGenerationEvent('truncatedResponses');
+
+                if (allowContinuation && continuationCount < maxContinuationCount) {
+                    continuationCount++;
+                    apiStats.continuations++;
+                    global.performanceLogger?.recordGenerationEvent('continuations');
+                    console.log('  ⚠️ Resposta truncada; solicitando continuação controlada...');
+                    promptToSend = `${prompt}\n\nContinue a reescrita sem repetir trechos. Entregue somente o Markdown restante.\n\n--- FINAL JÁ REESCRITO ---\n${accumulated.slice(-2500)}\n\n--- CONTEÚDO ORIGINAL ---\n${content}`;
+                    continue;
+                }
+
+                lastFailure = {
+                    reason: GENERATION_FAILURE.MAX_TOKENS,
+                    attempt,
+                    finishReason,
+                    originalLength: content.length,
+                    outputLength: accumulated.length,
+                    usageMetadata: lastUsageMetadata,
+                };
+                console.log(`  ⚠️ Resposta truncada em ${label}; descartando a tentativa integral.`);
+                break;
             }
             break;
         }
 
-        if (isThinkingLeak(accumulated)) {
-            console.log(`  ⚠️ Raciocínio interno detectado, retentando (${attempt}/${maxAttempts})...`);
-            logger.warn(`Raciocínio interno detectado em ${label}, retentativa ${attempt}`);
-            global.performanceLogger?.recordDelay(3000, 'validation');
-            await sleep(3);
+        if (lastFailure?.attempt === attempt && lastFailure.reason === GENERATION_FAILURE.MAX_TOKENS) {
+            await waitForValidationRetry(attempt, maxAttempts, 1);
             continue;
         }
 
-        if (isOutputTooShort(content, accumulated, minRatio)) {
-            console.log(`  ⚠️ Saída curta (${accumulated.length}/${content.length} chars), retentando (${attempt}/${maxAttempts})...`);
-            logger.warn(`Saída insuficiente para ${label}: ${accumulated.length}/${content.length} chars`);
-            global.performanceLogger?.recordDelay(3000, 'validation');
-            await sleep(3);
-            continue;
+        if (!accumulated.trim()) {
+            lastFailure = {
+                reason: GENERATION_FAILURE.EMPTY,
+                attempt,
+                originalLength: content.length,
+                outputLength: 0,
+                usageMetadata: lastUsageMetadata,
+            };
+        } else if (isThinkingLeak(accumulated)) {
+            lastFailure = {
+                reason: GENERATION_FAILURE.THINKING_LEAK,
+                attempt,
+                originalLength: content.length,
+                outputLength: accumulated.length,
+                usageMetadata: lastUsageMetadata,
+            };
+        } else if (isOutputTooShort(content, accumulated, minRatio)) {
+            lastFailure = {
+                reason: GENERATION_FAILURE.TOO_SHORT,
+                attempt,
+                originalLength: content.length,
+                outputLength: accumulated.length,
+                usageMetadata: lastUsageMetadata,
+            };
+        } else if (isOutputTooLong(content, accumulated, maxRatio)) {
+            lastFailure = {
+                reason: GENERATION_FAILURE.TOO_LONG,
+                attempt,
+                originalLength: content.length,
+                outputLength: accumulated.length,
+                usageMetadata: lastUsageMetadata,
+            };
+        } else {
+            const outputValidation = validateGeneratedContent(accumulated);
+            const headingCoverage = validateSourceHeadingCoverage(content, accumulated);
+            if (outputValidation.valid && headingCoverage.valid) {
+                logger.info(`${label} reescrito com sucesso (${accumulated.length} caracteres)`);
+                return accumulated;
+            }
+
+            lastFailure = {
+                reason: GENERATION_FAILURE.INVALID_STRUCTURE,
+                attempt,
+                details: [...outputValidation.issues, ...headingCoverage.issues].join(' '),
+                originalLength: content.length,
+                outputLength: accumulated.length,
+                usageMetadata: lastUsageMetadata,
+            };
         }
 
-        if (isOutputTooLong(content, accumulated, maxRatio)) {
-            console.log(`  ⚠️ Saída excessiva (${accumulated.length}/${content.length} chars), retentando (${attempt}/${maxAttempts})...`);
-            logger.warn(`Saída excessiva em ${label}: ${accumulated.length}/${content.length} caracteres`);
-            global.performanceLogger?.recordDelay(1000, 'validation');
-            await sleep(1);
-            continue;
-        }
-
-        const outputValidation = validateGeneratedContent(accumulated);
-        if (!outputValidation.valid) {
-            const details = outputValidation.issues.join(' ');
-            console.log(`  ⚠️ Estrutura inválida em ${label}; solicitando nova tentativa.`);
-            logger.warn(`Estrutura inválida em ${label}: ${details}`);
-            global.performanceLogger?.recordDelay(1000, 'validation');
-            await sleep(1);
-            continue;
-        }
-
-        logger.info(`${label} reescrito com sucesso (${accumulated.length} caracteres)`);
-        return accumulated;
+        apiStats.validationFailures++;
+        global.performanceLogger?.recordGenerationEvent('validationFailures');
+        logger.warn(`Saída rejeitada em ${label}: ${lastFailure.reason}${lastFailure.details ? ` - ${lastFailure.details}` : ''}`);
+        console.log(`  ⚠️ Saída rejeitada (${lastFailure.reason}), retentando (${attempt}/${maxAttempts})...`);
+        await waitForValidationRetry(attempt, maxAttempts, lastFailure.reason === GENERATION_FAILURE.TOO_SHORT ? 3 : 1);
     }
 
-    const error = new Error(`Falha ao reescrever ${label}: resposta inválida após ${maxAttempts} tentativas`);
+    const finalReason = lastFailure?.reason || 'desconhecido';
+    const error = new Error(
+        `Falha ao reescrever ${label} após ${maxAttempts} tentativas. `
+        + `Última rejeição: ${finalReason}; saída ${lastFailure?.outputLength ?? 0}/${lastFailure?.originalLength ?? content.length} caracteres.`
+    );
     error.code = 'PYGEM_OUTPUT_INVALID';
+    error.details = lastFailure;
     throw error;
+}
+
+async function rewriteBlockWithRecovery(block, prompt, label, depth = 0) {
+    try {
+        return await generateValidatedRewrite(block, prompt, {
+            label,
+            minOutputRatio: 0.7,
+        });
+    } catch (error) {
+        const fragments = getRecoverySubdivision(block, error, depth);
+        if (!fragments) throw error;
+
+        logger.warn(
+            `${label} será subdividido em ${fragments.length} fragmentos após ${error.details.reason}.`
+        );
+        console.log(
+            `  ↪️ ${label} truncado; recuperando em ${fragments.length} fragmentos menores...`
+        );
+
+        const rewrittenFragments = [];
+        for (let index = 0; index < fragments.length; index++) {
+            const fragmentLabel = `${label}, fragmento ${index + 1}/${fragments.length}`;
+            const fragmentPrompt = [
+                prompt,
+                '## RECUPERAÇÃO DE BLOCO',
+                `Reescreva somente o fragmento ${index + 1} de ${fragments.length} abaixo. `
+                    + 'Não antecipe nem repita os demais fragmentos.',
+            ].join('\n\n');
+            rewrittenFragments.push(
+                await rewriteBlockWithRecovery(
+                    fragments[index],
+                    fragmentPrompt,
+                    fragmentLabel,
+                    depth + 1
+                )
+            );
+        }
+
+        return rewrittenFragments.join('\n\n');
+    }
 }
 
 const errorMatches = (error, pattern) => pattern.test(`${error?.status || ''} ${error?.message || ''}`);
@@ -240,8 +469,7 @@ const geminiService = {
             return await generateValidatedRewrite(content, prompt, { label: 'conteúdo' });
 
         } catch (error) {
-            errorCount++;
-            logger.error(`Erro ao comunicar com o Vertex AI (tentativa ${retryCount + 1}): ${error.message}`);
+            logger.error(`Falha no fluxo de reescrita (tentativa de arquivo ${retryCount + 1}): ${error.message}`);
             
             // Tratamento de erros específicos do Vertex AI.
             if (isAuthenticationError(error)) {
@@ -274,15 +502,27 @@ const geminiService = {
                             safetySettings: config.safetySettings
                         });
 
-                        const result = await model.generateContent(`${prompt}\n\n${content}`);
-                        const response = await result.response;
-                        const fallbackContent = sanitizeModelOutput(response.text());
+                        const fallbackResult = await generateRewriteOnce(
+                            model,
+                            simpleModel,
+                            `${prompt}\n\n${content}`,
+                            { attempt: retryCount + 1 }
+                        );
+                        const fallbackContent = fallbackResult.text;
+
+                        if (fallbackResult.finishReason === 'MAX_TOKENS') {
+                            apiStats.truncatedResponses++;
+                            global.performanceLogger?.recordGenerationEvent('truncatedResponses');
+                            throw new Error('Resposta do modelo fallback truncada por MAX_TOKENS.');
+                        }
 
                         if (isOutputTooLong(content, fallbackContent, config.outputPolicy.maxOutputRatio)) {
                             throw new Error('Resposta do modelo fallback excedeu o limite proporcional de saída.');
                         }
                         const fallbackValidation = validateGeneratedContent(fallbackContent);
                         if (!fallbackValidation.valid) {
+                            apiStats.validationFailures++;
+                            global.performanceLogger?.recordGenerationEvent('validationFailures');
                             throw new Error(`Resposta do modelo fallback inválida: ${fallbackValidation.issues.join(' ')}`);
                         }
 
@@ -322,7 +562,7 @@ const geminiService = {
 
             logger.info(`Iniciando processamento em blocos no Vertex AI para arquivo: ${fileName}`);
 
-            const blocks = splitContentIntoBlocks(content);
+            const blocks = splitContentIntoBlocks(content, config.processing.blockInputTokens);
             let finalContent = '';
             let processedBlocks = 0;
             let blockErrors = 0;
@@ -342,10 +582,11 @@ const geminiService = {
                         estimateTokens(block)
                     );
 
-                    const rewrittenBlock = await generateValidatedRewrite(block, blockPrompt, {
-                        label: `bloco ${blockNumber}/${blocks.length}`,
-                        minOutputRatio: 0.7,
-                    });
+                    const rewrittenBlock = await rewriteBlockWithRecovery(
+                        block,
+                        blockPrompt,
+                        `bloco ${blockNumber}/${blocks.length}`
+                    );
 
                     if (finalContent) finalContent += '\n\n';
                     finalContent += rewrittenBlock;
@@ -372,12 +613,21 @@ const geminiService = {
                     logger.error(`Erro no bloco ${blockNumber}: ${blockError.message}`);
                     console.log(`  ❌ Erro no bloco ${blockNumber}: ${blockError.message}`);
 
-                    if (finalContent) finalContent += '\n\n';
-                    finalContent += `[ERRO: Não foi possível reescrever o bloco ${blockNumber}]\n\n${block}`;
-
                     if (global.performanceLogger) {
                         global.performanceLogger.logBlockEnd(blockNumber, false, blockError.message, 0);
                     }
+
+                    const error = new Error(
+                        `Falha definitiva no bloco ${blockNumber}/${blocks.length}; `
+                        + `nenhum resultado parcial foi aceito. ${blockError.message}`
+                    );
+                    error.code = 'PYGEM_BLOCK_REWRITE_FAILED';
+                    error.details = {
+                        blockNumber,
+                        totalBlocks: blocks.length,
+                        cause: blockError.details || null,
+                    };
+                    throw error;
                 }
             }
 
@@ -387,6 +637,7 @@ const geminiService = {
 
             logger.info(`Processamento em blocos concluído para ${fileName}: ${processedBlocks}/${blocks.length} blocos, ${blockErrors} erros`);
 
+            assertSourceHeadingCoverage(content, finalContent);
             return finalContent;
 
         } catch (error) {
@@ -472,7 +723,7 @@ const geminiService = {
                 throw new Error('Configuração do Vertex AI incompleta. Verifique o arquivo .env.');
             }
 
-            requestCount++;
+            apiStats.requests++;
             logger.info(`Iniciando enriquecimento Mermaid com Vertex AI (tentativa ${retryCount + 1}/${maxRetries + 1})`);
 
             // Configura o modelo com temperatura baixa para precisão
@@ -502,7 +753,7 @@ const geminiService = {
             return enrichedContent;
 
         } catch (error) {
-            errorCount++;
+            apiStats.apiErrors++;
             logger.error(`Erro ao enriquecer conteúdo com Mermaid (Tentativa ${retryCount + 1}): ${error.message}`);
 
             if (isAuthenticationError(error)) {
@@ -586,7 +837,7 @@ const geminiService = {
 
             while (!blockProcessed && retryCount <= maxBlockRetries) {
                 try {
-                    requestCount++;
+                    apiStats.requests++;
 
                     // Prompt para enriquecimento Mermaid
                     const fullPrompt = `${prompt}\n\n${block}`;
@@ -624,6 +875,7 @@ const geminiService = {
 
                 } catch (blockError) {
                     errorCount++;
+                    apiStats.apiErrors++;
                     retryCount++;
                     logger.error(`Erro ao enriquecer bloco ${blockNumber} com Mermaid (Tentativa ${retryCount}): ${blockError.message}`);
 
@@ -697,7 +949,16 @@ const geminiService = {
 
     // Expor utilitários de diagnóstico
     getApiStats,
-    refreshGeminiClient
+    refreshGeminiClient,
+    diagnostics: {
+        GENERATION_FAILURE,
+        calculateMaxOutputTokens,
+        getRetryInstruction,
+        buildAttemptPrompt,
+        shouldRewriteInBlocks,
+        getRecoverySubdivision,
+    },
+    shouldRewriteInBlocks,
 };
 
 module.exports = geminiService;

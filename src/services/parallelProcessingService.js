@@ -131,7 +131,7 @@ class ParallelProcessingService {
             const estimatedTokens = estimateTokens(content);
             
             let rewrittenContent;
-            if (estimatedTokens > 5000) {
+            if (geminiService.shouldRewriteInBlocks(estimatedTokens)) {
                 rewrittenContent = await geminiService.rewriteContentInBlocks(content, prompt, fileName);
             } else {
                 rewrittenContent = await geminiService.rewriteContent(content, prompt);
@@ -139,8 +139,11 @@ class ParallelProcessingService {
 
             rewrittenContent = finalizeRewrittenContent(rewrittenContent, prepared);
 
-            // Salva o arquivo processado
-            await this.saveProcessedFile(file, rewrittenContent, options);
+            // O chamador pode adiar a escrita para publicar cada resultado
+            // individualmente e de forma atômica após a validação.
+            if (!options.deferWrite) {
+                await this.saveProcessedFile(file, rewrittenContent, options);
+            }
 
             const processingTime = Date.now() - startTime;
 

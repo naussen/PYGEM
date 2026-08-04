@@ -149,6 +149,86 @@ function isPredominantlyUppercaseTitle(title, contextualAcronyms = new Set()) {
     return uppercaseCount / letters.length >= 0.8;
 }
 
+function normalizeHeadingKey(title) {
+    return String(title || '')
+        .replace(/\bDOUTINA\b/gi, 'DOUTRINA')
+        .replace(/[*_`]/g, '')
+        .normalize('NFD')
+        .replace(/[\u0300-\u036f]/g, '')
+        .toLowerCase()
+        .replace(/[^\p{L}\p{N}]+/gu, ' ')
+        .replace(/\s+/g, ' ')
+        .trim();
+}
+
+function extractStructuralHeadings(markdown) {
+    const headings = [];
+    let fence = null;
+
+    String(markdown || '').split(/\r?\n/).forEach(line => {
+        const trimmed = line.trim();
+        const fenceMatch = trimmed.match(/^(`{3,}|~{3,})/);
+        if (fenceMatch) {
+            const marker = fenceMatch[1];
+            if (!fence) fence = marker[0];
+            else if (marker[0] === fence) fence = null;
+            return;
+        }
+        if (fence) return;
+
+        const heading = trimmed.match(/^(#{1,3})(?!#)\s+(.+?)\s*#*\s*$/);
+        if (!heading) return;
+        headings.push({
+            level: heading[1].length,
+            title: heading[2].trim(),
+            key: normalizeHeadingKey(heading[2]),
+        });
+    });
+
+    return headings;
+}
+
+function validateSourceHeadingCoverage(sourceMarkdown, generatedMarkdown) {
+    const expected = extractStructuralHeadings(sourceMarkdown);
+    if (expected.length === 0) return { valid: true, issues: [], expected, actual: [] };
+
+    const actual = extractStructuralHeadings(generatedMarkdown);
+    let expectedIndex = 0;
+    actual.forEach(heading => {
+        const current = expected[expectedIndex];
+        if (current && heading.level === current.level && heading.key === current.key) {
+            expectedIndex++;
+        }
+    });
+
+    const missing = expected.slice(expectedIndex);
+    const issues = missing.length === 0
+        ? []
+        : [
+            'cobertura estrutural incompleta; títulos ausentes ou fora de ordem: '
+            + missing.map(heading => `${'#'.repeat(heading.level)} ${heading.title}`).join(' | '),
+        ];
+
+    return {
+        valid: issues.length === 0,
+        issues,
+        expected,
+        actual,
+        missing,
+    };
+}
+
+function assertSourceHeadingCoverage(sourceMarkdown, generatedMarkdown) {
+    const result = validateSourceHeadingCoverage(sourceMarkdown, generatedMarkdown);
+    if (!result.valid) {
+        const error = new Error(`Conteúdo gerado incompleto: ${result.issues.join(' ')}`);
+        error.code = 'PYGEM_HEADING_COVERAGE_INVALID';
+        error.details = result;
+        throw error;
+    }
+    return generatedMarkdown;
+}
+
 function validateMarkdownQuality(markdown) {
     const issues = [];
     const source = String(markdown || '');
@@ -245,5 +325,7 @@ module.exports = {
     validateMarkdownQuality,
     validateGeneratedContent,
     assertValidGeneratedContent,
+    validateSourceHeadingCoverage,
+    assertSourceHeadingCoverage,
     isPredominantlyUppercaseTitle,
 };

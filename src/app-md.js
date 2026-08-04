@@ -3,8 +3,14 @@ require('dotenv').config();
 const fs = require('fs');
 const path = require('path');
 const readline = require('readline-sync');
-const { validateDirectory } = require('./utils/validation');
-const { readMdFiles, writeRewrittenContent, createOutputDirectory, readAllMdFilesInSubdirectories, appendToSubdirectoryFile } = require('./services/fileServiceMd');
+const { validateDirectory, assertValidGeneratedContent } = require('./utils/validation');
+const {
+    readMdFiles,
+    createOutputDirectory,
+    readAllMdFilesInSubdirectories,
+    writeRewrittenFileAtomic,
+    writeDirectoryProcessingManifest,
+} = require('./services/fileServiceMd');
 const { estimateTokens } = require('./services/tokenService');
 const geminiService = require('./services/geminiService');
 const ParallelProcessingService = require('./services/parallelProcessingService');
@@ -175,27 +181,60 @@ async function main() {
         let successCount = 0;
         let errorCount = 0;
         const errors = [];
+        const directoryResults = [];
 
         // Processa cada diretório
         for (let dirIndex = 0; dirIndex < directoriesWithFiles.length; dirIndex++) {
             const dirInfo = directoriesWithFiles[dirIndex];
             const dirPath = dirInfo.directory;
-            const dirName = path.basename(dirPath);
             const mdFiles = dirInfo.files;
+            const dirSuccessfulEntries = [];
+            const dirFailedEntries = [];
             
             console.log(`\n📁 Processando diretório (${dirIndex + 1}/${directoriesWithFiles.length}): ${dirPath}`);
             logger.info(`Processando diretório: ${dirPath} com ${mdFiles.length} arquivos`);
             
             // Analisar arquivos para decidir estratégia de processamento
-            const filesWithContent = mdFiles.map(file => {
+            const inspectedFiles = mdFiles.map(file => {
                 try {
                     const content = fs.readFileSync(file, 'utf-8');
                     const tokens = estimateTokens(content);
-                    return { path: file, name: path.basename(file), content, tokens };
-                } catch {
-                    return { path: file, name: path.basename(file), content: '', tokens: 0 };
+                    return {
+                        path: file,
+                        name: path.basename(file),
+                        content,
+                        tokens,
+                        readError: content.trim() ? null : 'Arquivo vazio',
+                    };
+                } catch (error) {
+                    return {
+                        path: file,
+                        name: path.basename(file),
+                        content: '',
+                        tokens: 0,
+                        readError: `Falha de leitura: ${error.message}`,
+                    };
                 }
-            }).filter(file => file.content.trim().length > 0);
+            });
+            const filesWithContent = inspectedFiles.filter(file => !file.readError);
+
+            inspectedFiles.filter(file => file.readError).forEach(file => {
+                const errorMessage = `Erro ao processar ${file.name}: ${file.readError}`;
+                dirFailedEntries.push({
+                    filePath: file.path,
+                    error: file.readError,
+                });
+                errorCount++;
+                errors.push(errorMessage);
+                logger.error(errorMessage);
+                performanceLogger.recordFileProcessing({
+                    fileName: file.name,
+                    filePath: file.path,
+                    estimatedTokens: file.tokens,
+                    success: false,
+                    errorMessage: file.readError,
+                });
+            });
             
             const { smallFiles, largeFiles } = parallelService.groupFilesBySize(filesWithContent);
             
@@ -208,7 +247,9 @@ async function main() {
                 const parallelOptions = {
                     replaceOriginal,
                     deleteOriginal,
-                    outputDir: replaceOriginal ? null : outputDirectory
+                    outputDir: replaceOriginal ? null : outputDirectory,
+                    // A publicação individual e atômica é centralizada neste fluxo.
+                    deferWrite: true,
                 };
                 
                 const parallelResults = await parallelService.processFilesInParallel(
@@ -217,9 +258,38 @@ async function main() {
                     parallelOptions
                 );
                 
-                // Log dos resultados do processamento paralelo
+                // Publica e registra os resultados do processamento paralelo.
                 parallelResults.results.forEach(result => {
                     const resultFileName = path.basename(result.file || 'arquivo');
+                    if (result.success) {
+                        try {
+                            const outputFilePath = writeRewrittenFileAtomic(
+                                outputDirectory,
+                                inputDirectory,
+                                result.file,
+                                result.content
+                            );
+                            dirSuccessfulEntries.push({
+                                filePath: result.file,
+                                outputFilePath,
+                            });
+                            successCount++;
+                            console.log(`    ✅ Salvo: ${outputFilePath}`);
+                        } catch (error) {
+                            result.success = false;
+                            result.error = `Falha ao publicar resultado validado: ${error.message}`;
+                        }
+                    }
+
+                    if (!result.success) {
+                        dirFailedEntries.push({ filePath: result.file, error: result.error });
+                        errorCount++;
+                        const errorMessage = `Erro ao processar ${resultFileName}: ${result.error}`;
+                        errors.push(errorMessage);
+                        logger.error(errorMessage);
+                        console.log(`    ❌ Erro: ${result.error}`);
+                    }
+
                     performanceLogger.recordFileProcessing({
                         fileName: resultFileName,
                         filePath: result.file,
@@ -227,21 +297,12 @@ async function main() {
                         duration: result.processingTime || 0,
                         success: result.success,
                         errorMessage: result.error || null,
-                        outputLength: result.content?.length || 0,
+                        outputLength: result.success ? (result.content?.length || 0) : 0,
                     });
-
-                    if (result.success) {
-                        successCount++;
-                    } else {
-                        errorCount++;
-                        const errorMessage = `Erro ao processar ${resultFileName}: ${result.error}`;
-                        errors.push(errorMessage);
-                        logger.error(errorMessage);
-                        console.log(`    ❌ Erro: ${result.error}`);
-                    }
                 });
                 
-                console.log(`✅ Processamento paralelo concluído: ${parallelResults.successCount}/${parallelResults.totalFiles} arquivos`);
+                const publishedParallelCount = parallelResults.results.filter(result => result.success).length;
+                console.log(`✅ Processamento paralelo concluído: ${publishedParallelCount}/${parallelResults.totalFiles} arquivos publicados`);
             }
             
             // Processa arquivos grandes sequencialmente
@@ -273,11 +334,11 @@ async function main() {
                     
                     // Decide se processa em blocos ou de uma vez
                     let rewrittenContent;
-                    if (estimatedTokens > 5000) {
-                        console.log(`    📦 Arquivo será processado em blocos (>5000 tokens)`);
+                    if (geminiService.shouldRewriteInBlocks(estimatedTokens)) {
+                        console.log(`    📦 Arquivo será processado em blocos (limite seguro: ${config.processing.singlePassMaxInputTokens} tokens)`);
                         rewrittenContent = await geminiService.rewriteContentInBlocks(content, prompt, fileName);
                     } else {
-                        console.log(`    📄 Arquivo será processado de uma vez (<5000 tokens)`);
+                        console.log(`    📄 Arquivo será processado de uma vez (até ${config.processing.singlePassMaxInputTokens} tokens)`);
                         rewrittenContent = await geminiService.rewriteContent(content, prompt);
                     }
 
@@ -294,6 +355,7 @@ async function main() {
                     
                     rewrittenContent = enhancementResult.processedContent;
                     rewrittenContent = finalizeRewrittenContent(rewrittenContent, prepared);
+                    assertValidGeneratedContent(rewrittenContent);
                     
                     // Log das mudanças aplicadas
                     if (enhancementResult.hasChanges) {
@@ -302,12 +364,21 @@ async function main() {
                         });
                     }
 
-                    // Salva o conteúdo reescrito no arquivo único da subpasta
-                    appendToSubdirectoryFile(outputDirectory, dirPath, fileName, rewrittenContent, i === 0);
+                    const outputFilePath = writeRewrittenFileAtomic(
+                        outputDirectory,
+                        inputDirectory,
+                        file,
+                        rewrittenContent
+                    );
+                    dirSuccessfulEntries.push({
+                        filePath: file,
+                        outputFilePath,
+                    });
                     
                     successCount++;
                     logger.info(`Arquivo processado com sucesso: ${fileName}`);
                     console.log(`    ✅ Concluído: ${fileName}`);
+                    console.log(`    💾 Salvo: ${outputFilePath}`);
                     
                     // Finaliza o logging de performance para este arquivo
                     if (performanceLogger) {
@@ -319,7 +390,7 @@ async function main() {
                     
                     // Exibe estatísticas da API
                     const apiStats = geminiService.getApiStats();
-                    console.log(`    📊 Estatísticas API: ${apiStats.requests} requisições, ${apiStats.errors} erros`);
+                    console.log(`    📊 Estatísticas API: ${apiStats.requests} requisições, ${apiStats.apiErrors} erros reais, ${apiStats.validationFailures} rejeições locais`);
                     
                     // Pausa configurável entre arquivos (exceto para o último arquivo do diretório)
                     if (i < filesToProcessSequentially.length - 1) {
@@ -334,6 +405,10 @@ async function main() {
                     }
 
                 } catch (error) {
+                    dirFailedEntries.push({
+                        filePath: file,
+                        error: error.message,
+                    });
                     errorCount++;
                     const errorMessage = `Erro ao processar ${fileName}: ${error.message}`;
                     errors.push(errorMessage);
@@ -345,6 +420,29 @@ async function main() {
                         performanceLogger.endFileProcessing(false, error.message, 0);
                     }
                 }
+            }
+
+            const directoryResult = writeDirectoryProcessingManifest(
+                outputDirectory,
+                inputDirectory,
+                dirPath,
+                mdFiles,
+                dirSuccessfulEntries,
+                dirFailedEntries
+            );
+            directoryResults.push({
+                directory: dirPath,
+                complete: directoryResult.complete,
+                manifestPath: directoryResult.manifestPath,
+                failedFiles: directoryResult.failedFiles,
+            });
+
+            if (directoryResult.complete) {
+                console.log(`✅ Diretório concluído: ${dirSuccessfulEntries.length} arquivo(s) individual(is) publicado(s)`);
+            } else {
+                console.log(`⚠️ Diretório incompleto: ${dirSuccessfulEntries.length} arquivo(s) publicado(s)`);
+                console.log(`   Manifesto: ${directoryResult.manifestPath}`);
+                console.log(`   Arquivos com falha: ${directoryResult.failedFiles.length}`);
             }
             
             // Pausa configurável entre diretórios (exceto para o último diretório)
@@ -366,6 +464,11 @@ async function main() {
         console.log(`✅ Arquivos processados com sucesso: ${successCount}`);
         console.log(`❌ Arquivos com erro: ${errorCount}`);
         console.log(`📁 Arquivos salvos em: ${outputDirectory}`);
+        const incompleteDirectories = directoryResults.filter(result => !result.complete);
+        console.log(`📚 Diretórios completos: ${directoryResults.length - incompleteDirectories.length}/${directoryResults.length}`);
+        if (incompleteDirectories.length > 0) {
+            console.log(`⚠️ Diretórios incompletos: ${incompleteDirectories.length}. Os arquivos concluídos permanecem disponíveis; consulte os manifestos para reprocessar apenas as falhas.`);
+        }
         
         // Exibir informações sobre melhorias de performance
         if (config.batch?.enableParallelProcessing) {
@@ -380,7 +483,10 @@ async function main() {
         const finalApiStats = geminiService.getApiStats();
         console.log(`\n☁️ ESTATÍSTICAS DO VERTEX AI:`);
         console.log(`📊 Total de requisições: ${finalApiStats.requests}`);
-        console.log(`❌ Total de erros: ${finalApiStats.errors}`);
+        console.log(`❌ Erros reais da API: ${finalApiStats.apiErrors}`);
+        console.log(`⚠️ Rejeições locais: ${finalApiStats.validationFailures}`);
+        console.log(`✂️ Respostas truncadas: ${finalApiStats.truncatedResponses}`);
+        console.log(`🔁 Retentativas de geração: ${finalApiStats.retries}`);
         console.log(`🎯 Modelo: ${finalApiStats.model}`);
         console.log(`☁️ Projeto/região: ${finalApiStats.project}/${finalApiStats.location}`);
 
@@ -392,7 +498,7 @@ async function main() {
         }
 
         logger.info(`Processamento concluído. Sucessos: ${successCount}, Erros: ${errorCount}`);
-        logger.info(`Estatísticas Vertex AI: ${finalApiStats.requests} requisições, ${finalApiStats.errors} erros`);
+        logger.info(`Estatísticas Vertex AI: ${finalApiStats.requests} requisições, ${finalApiStats.apiErrors} erros reais de API, ${finalApiStats.validationFailures} rejeições locais`);
         
         // Gera e exibe relatório de performance
         if (performanceLogger) {
