@@ -6,7 +6,10 @@ const path = require('path');
 const geminiService = require('./geminiService');
 const { estimateTokens } = require('./tokenService');
 const { prepareContentForRewrite, finalizeRewrittenContent } = require('../utils/contentPreprocessor');
-const { assertValidGeneratedContent } = require('../utils/validation');
+const {
+    assertValidGeneratedContent,
+    assertSourceHeadingCoverage,
+} = require('../utils/validation');
 const logger = require('../utils/logger');
 
 class ParallelProcessingService {
@@ -138,11 +141,18 @@ class ParallelProcessingService {
             }
 
             rewrittenContent = finalizeRewrittenContent(rewrittenContent, prepared);
+            assertValidGeneratedContent(rewrittenContent, {
+                sourceMarkdown: content,
+            });
+            assertSourceHeadingCoverage(content, rewrittenContent);
 
             // O chamador pode adiar a escrita para publicar cada resultado
             // individualmente e de forma atômica após a validação.
             if (!options.deferWrite) {
-                await this.saveProcessedFile(file, rewrittenContent, options);
+                await this.saveProcessedFile(file, rewrittenContent, {
+                    ...options,
+                    sourceMarkdown: content,
+                });
             }
 
             const processingTime = Date.now() - startTime;
@@ -164,7 +174,9 @@ class ParallelProcessingService {
      */
     async saveProcessedFile(file, content, options) {
         const { replaceOriginal = false, deleteOriginal = false, outputDir = null } = options;
-        assertValidGeneratedContent(content);
+        assertValidGeneratedContent(content, {
+            sourceMarkdown: options.sourceMarkdown,
+        });
         
         if (replaceOriginal) {
             // Substitui o arquivo original

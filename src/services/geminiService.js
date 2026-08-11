@@ -7,6 +7,7 @@ const {
     isThinkingLeak,
     isOutputTooShort,
     isOutputTooLong,
+    detectRepetitionLoop,
     extractFinishReason,
     getBlockPrompt,
 } = require('../utils/contentPreprocessor');
@@ -15,7 +16,10 @@ const {
     validateSourceHeadingCoverage,
     assertSourceHeadingCoverage,
 } = require('../utils/validation');
+const { createRewriteCheckpoint } = require('./rewriteCheckpointService');
 let genAI = null;
+let recoveryGenAI = null;
+let capacityCooldownUntil = 0;
 const apiStats = {
     requests: 0,
     apiErrors: 0,
@@ -23,16 +27,82 @@ const apiStats = {
     truncatedResponses: 0,
     retries: 0,
     continuations: 0,
+    repetitionLoops: 0,
+    recoverySubdivisions: 0,
+    preservedBlocks: 0,
 };
+
+const errorMatches = (error, pattern) => pattern.test(
+    `${error?.status || ''} ${error?.code || ''} ${error?.message || ''}`
+);
+const isAuthenticationError = (error) => errorMatches(error, /401|UNAUTHENTICATED|default credentials|invalid_grant/i);
+const isPermissionError = (error) => errorMatches(error, /403|PERMISSION_DENIED/i);
+const isQuotaError = (error) => errorMatches(error, /429|RESOURCE_EXHAUSTED|quota|Too Many Requests/i);
+const isUnavailableError = (error) => errorMatches(error, /503|UNAVAILABLE|Service Unavailable|overloaded/i);
+const isRequestTimeoutError = (error) => errorMatches(
+    error,
+    /timeout|timed out|DEADLINE_EXCEEDED|AbortError|The operation was aborted/i
+);
+const isTransientCapacityError = (error) => (
+    isQuotaError(error) || isUnavailableError(error) || isRequestTimeoutError(error)
+);
 
 const GENERATION_FAILURE = Object.freeze({
     EMPTY: 'empty',
     MAX_TOKENS: 'max_tokens',
+    FINISH_REASON: 'finish_reason',
     TOO_SHORT: 'too_short',
     TOO_LONG: 'too_long',
     THINKING_LEAK: 'thinking_leak',
     INVALID_STRUCTURE: 'invalid_structure',
+    REPETITION_LOOP: 'repetition_loop',
 });
+
+function createRequestBudget(label, maximum = config.retry.maxApiCallsPerRootBlock, parentBudget = null) {
+    let used = 0;
+    return {
+        label,
+        maximum,
+        get used() {
+            return used;
+        },
+        consume() {
+            if (used >= maximum) {
+                const error = new Error(
+                    `Orçamento de ${maximum} chamadas esgotado para ${label}; `
+                    + 'o bloco será preservado sem nova multiplicação de tentativas.'
+                );
+                error.code = 'PYGEM_REQUEST_BUDGET_EXHAUSTED';
+                throw error;
+            }
+            parentBudget?.consume();
+            used++;
+            return used;
+        },
+    };
+}
+
+function createPartialRewriteError(failedBlockDetails, totalBlocks) {
+    const error = new Error(
+        `Arquivo não publicado: ${failedBlockDetails.length} de ${totalBlocks} bloco(s) `
+        + 'permaneceram sem reescrita. Os blocos válidos foram salvos no checkpoint; '
+        + 'execute novamente para processar somente os pendentes.'
+    );
+    error.code = 'PYGEM_PARTIAL_REWRITE';
+    error.details = failedBlockDetails;
+    return error;
+}
+
+const RECOVERABLE_FINISH_REASONS = new Set([
+    'RECITATION',
+    'LANGUAGE',
+    'OTHER',
+    'FINISH_REASON_UNSPECIFIED',
+]);
+
+function isSuccessfulFinishReason(finishReason) {
+    return finishReason === 'STOP';
+}
 
 /**
  * Reinicializa o cliente da API do Gemini para evitar conflitos entre documentos
@@ -40,6 +110,7 @@ const GENERATION_FAILURE = Object.freeze({
 const refreshGeminiClient = () => {
     if (!config.hasValidVertexConfig()) {
         genAI = null;
+        recoveryGenAI = null;
         return false;
     }
 
@@ -49,11 +120,30 @@ const refreshGeminiClient = () => {
         location: config.location,
         apiVersion: config.apiVersion,
     });
+    recoveryGenAI = null;
     logger.info(`Cliente Vertex AI inicializado (projeto: ${config.project}, região: ${config.location})`);
     return true;
 };
 
-const getGeminiClient = () => {
+const getGeminiClient = (location = config.location) => {
+    if (location !== config.location) {
+        if (location !== config.recoveryLocation) {
+            throw new Error(`Localização Vertex AI não configurada para recuperação: ${location}.`);
+        }
+        if (!recoveryGenAI) {
+            recoveryGenAI = new GoogleGenAI({
+                vertexai: true,
+                project: config.project,
+                location,
+                apiVersion: config.apiVersion,
+            });
+            logger.info(
+                `Cliente Vertex AI de recuperação inicializado `
+                + `(projeto: ${config.project}, região: ${location})`
+            );
+        }
+        return recoveryGenAI;
+    }
     if (!genAI && !refreshGeminiClient()) {
         throw new Error('Configuração do Vertex AI incompleta. Verifique GOOGLE_CLOUD_PROJECT e GOOGLE_CLOUD_LOCATION.');
     }
@@ -61,9 +151,9 @@ const getGeminiClient = () => {
 };
 
 // Adapta o SDK atual à pequena interface de modelo usada pela aplicação.
-const getGenerativeModel = ({ model, generationConfig, safetySettings }) => ({
+const getGenerativeModel = ({ model, generationConfig, safetySettings, location }) => ({
     async generateContent(contents) {
-        const response = await getGeminiClient().models.generateContent({
+        const response = await getGeminiClient(location).models.generateContent({
             model,
             contents,
             config: {
@@ -100,80 +190,250 @@ const getApiStats = () => {
     };
 };
 
-function buildGenerationConfig(overrides = {}) {
-    return {
+function buildGenerationConfig(overrides = {}, modelName = config.model) {
+    const generationConfig = {
         ...config.generationConfig,
         ...overrides,
     };
+
+    if (/^gemini-(?:3|[4-9])(?:\.|-)/.test(modelName)) {
+        generationConfig.thinkingConfig = {
+            thinkingLevel: config.modelPolicy.gemini3ThinkingLevel,
+            includeThoughts: false,
+        };
+        delete generationConfig.topK;
+
+        if (modelName === 'gemini-3.5-flash-lite') {
+            // O Flash-Lite 3.5 ignora amostragem customizada; omitir esses
+            // campos evita uma falsa impressão de determinismo configurável.
+            delete generationConfig.temperature;
+            delete generationConfig.topP;
+        }
+    }
+
+    return generationConfig;
 }
 
-function createModel(overrides = {}, modelName = config.model) {
+function createModel(overrides = {}, modelName = config.model, location = config.location) {
     return {
         model: getGenerativeModel({
             model: modelName,
-            generationConfig: buildGenerationConfig(overrides),
+            generationConfig: buildGenerationConfig(overrides, modelName),
             safetySettings: config.safetySettings,
+            location,
         }),
         modelName,
     };
 }
 
+function getRetryAfterMs(error) {
+    const headers = error?.response?.headers || error?.headers;
+    const rawValue = typeof headers?.get === 'function'
+        ? headers.get('retry-after')
+        : headers?.['retry-after'];
+    if (rawValue == null) return 0;
+
+    const seconds = Number(rawValue);
+    if (Number.isFinite(seconds) && seconds >= 0) return seconds * 1000;
+    const retryDate = Date.parse(rawValue);
+    return Number.isFinite(retryDate) ? Math.max(0, retryDate - Date.now()) : 0;
+}
+
+function calculateRequestRetryDelayMs(retryIndex, retryAfterMs = 0, randomValue = Math.random()) {
+    const exponentialDelay = Math.min(
+        config.retry.requestRetryMaxDelayMs,
+        config.retry.requestRetryInitialDelayMs * (2 ** retryIndex)
+    );
+    const normalizedRandom = Math.min(1, Math.max(0, Number(randomValue) || 0));
+    const jitter = exponentialDelay * config.retry.requestRetryJitterRatio * normalizedRandom;
+    const localBackoff = Math.min(
+        config.retry.requestRetryMaxDelayMs,
+        Math.round(exponentialDelay + jitter)
+    );
+    return Math.max(retryAfterMs, localBackoff);
+}
+
+async function waitForCapacityCooldown() {
+    const remainingMs = capacityCooldownUntil - Date.now();
+    if (remainingMs <= 0) return;
+    global.performanceLogger?.recordDelay(remainingMs, 'capacity-cooldown');
+    await sleep(remainingMs / 1000);
+}
+
 async function generateRewriteOnce(model, modelName, fullPrompt, context = {}) {
-    apiStats.requests++;
-    const startedAt = Date.now();
     const inputTokens = estimateTokens(fullPrompt);
+    const maxRequestRetries = context.maxRequestRetries ?? config.retry.maxRequestRetries;
 
+    for (let requestAttempt = 0; requestAttempt <= maxRequestRetries; requestAttempt++) {
+        await waitForCapacityCooldown();
+        const budgetCallNumber = context.budget?.consume() ?? null;
+        apiStats.requests++;
+        const startedAt = Date.now();
+
+        try {
+            const result = await model.generateContent(fullPrompt);
+            const response = await result.response;
+            const finishReason = extractFinishReason(response);
+            const text = sanitizeModelOutput(response.text());
+            const usageMetadata = response.usageMetadata || {};
+            const duration = Date.now() - startedAt;
+
+            global.performanceLogger?.logApiCall({
+                endpoint: 'models.generateContent',
+                model: modelName,
+                inputTokens,
+                outputTokens: estimateTokens(text),
+                duration,
+                success: true,
+                attempt: context.attempt,
+                requestAttempt: requestAttempt + 1,
+                budgetCallNumber,
+                workUnitId: context.workUnitId ?? null,
+                parentWorkUnitId: context.parentWorkUnitId ?? null,
+                recoveryDepth: context.recoveryDepth ?? 0,
+                maxOutputTokens: context.maxOutputTokens ?? null,
+                continuation: context.continuation || 0,
+                finishReason,
+                promptTokenCount: usageMetadata.promptTokenCount ?? null,
+                candidatesTokenCount: usageMetadata.candidatesTokenCount ?? null,
+                thoughtsTokenCount: usageMetadata.thoughtsTokenCount ?? null,
+                totalTokenCount: usageMetadata.totalTokenCount ?? null,
+                outputLength: text.length,
+            });
+
+            return { text, finishReason, usageMetadata };
+        } catch (error) {
+            apiStats.apiErrors++;
+            global.performanceLogger?.logApiCall({
+                endpoint: 'models.generateContent',
+                model: modelName,
+                inputTokens,
+                outputTokens: 0,
+                duration: Date.now() - startedAt,
+                success: false,
+                errorMessage: error.message,
+                attempt: context.attempt,
+                requestAttempt: requestAttempt + 1,
+                budgetCallNumber,
+                workUnitId: context.workUnitId ?? null,
+                parentWorkUnitId: context.parentWorkUnitId ?? null,
+                recoveryDepth: context.recoveryDepth ?? 0,
+                maxOutputTokens: context.maxOutputTokens ?? null,
+                continuation: context.continuation || 0,
+            });
+
+            if (!isTransientCapacityError(error)) {
+                throw error;
+            }
+            if (requestAttempt >= maxRequestRetries) {
+                const transientType = isQuotaError(error)
+                    ? '429'
+                    : (isRequestTimeoutError(error) ? 'timeout' : '503');
+                const exhaustedError = new Error(
+                    `Requisição ao Vertex AI indisponível após ${maxRequestRetries + 1} `
+                    + `tentativas da mesma requisição. ${error.message}`
+                );
+                exhaustedError.code = 'PYGEM_CAPACITY_RETRIES_EXHAUSTED';
+                exhaustedError.capacityType = transientType;
+                exhaustedError.retryAfterMs = getRetryAfterMs(error);
+                exhaustedError.cause = error;
+                throw exhaustedError;
+            }
+
+            const delayMs = calculateRequestRetryDelayMs(
+                requestAttempt,
+                getRetryAfterMs(error)
+            );
+            capacityCooldownUntil = Math.max(capacityCooldownUntil, Date.now() + delayMs);
+            apiStats.retries++;
+            global.performanceLogger?.recordGenerationEvent('retries');
+            const transientType = isQuotaError(error)
+                ? '429'
+                : (isRequestTimeoutError(error) ? 'timeout' : '503');
+            logger.warn(
+                `Requisição temporariamente indisponível (${transientType}); `
+                + `nova tentativa de requisição em ${(delayMs / 1000).toFixed(1)}s `
+                + `(${requestAttempt + 2}/${maxRequestRetries + 1}).`
+            );
+            console.log(
+                `  ⚠️ Vertex AI temporariamente indisponível (${transientType}); aguardando `
+                + `${(delayMs / 1000).toFixed(1)}s antes de repetir a mesma requisição...`
+            );
+        }
+    }
+
+    throw new Error('Fluxo de retry de requisição encerrado inesperadamente.');
+}
+
+async function generateRewriteWithCapacityFallback(
+    primaryModel,
+    primaryModelName,
+    generationOverrides,
+    fullPrompt,
+    context
+) {
     try {
-        const result = await model.generateContent(fullPrompt);
-        const response = await result.response;
-        const finishReason = extractFinishReason(response);
-        const text = sanitizeModelOutput(response.text());
-        const usageMetadata = response.usageMetadata || {};
-        const duration = Date.now() - startedAt;
-
-        global.performanceLogger?.logApiCall({
-            endpoint: 'models.generateContent',
-            model: modelName,
-            inputTokens,
-            outputTokens: estimateTokens(text),
-            duration,
-            success: true,
-            attempt: context.attempt,
-            continuation: context.continuation || 0,
-            finishReason,
-            promptTokenCount: usageMetadata.promptTokenCount ?? null,
-            candidatesTokenCount: usageMetadata.candidatesTokenCount ?? null,
-            thoughtsTokenCount: usageMetadata.thoughtsTokenCount ?? null,
-            totalTokenCount: usageMetadata.totalTokenCount ?? null,
-            outputLength: text.length,
-        });
-
-        return { text, finishReason, usageMetadata };
+        return await generateRewriteOnce(primaryModel, primaryModelName, fullPrompt, context);
     } catch (error) {
-        apiStats.apiErrors++;
-        global.performanceLogger?.logApiCall({
-            endpoint: 'models.generateContent',
-            model: modelName,
-            inputTokens,
-            outputTokens: 0,
-            duration: Date.now() - startedAt,
-            success: false,
-            errorMessage: error.message,
-            attempt: context.attempt,
-            continuation: context.continuation || 0,
-        });
-        throw error;
+        const fallbackModelName = config.fallbackModel;
+        if (
+            error?.code !== 'PYGEM_CAPACITY_RETRIES_EXHAUSTED'
+            || !fallbackModelName
+            || fallbackModelName === primaryModelName
+        ) {
+            throw error;
+        }
+
+        apiStats.retries++;
+        global.performanceLogger?.recordGenerationEvent('retries');
+        logger.warn(
+            `Capacidade do modelo ${primaryModelName} esgotada; `
+            + `tentando o fallback ${fallbackModelName} com o mesmo orçamento.`
+        );
+        if (error.capacityType === '429') {
+            const fallbackCooldownMs = Math.max(
+                config.retry.requestRetryInitialDelayMs,
+                error.retryAfterMs || 0
+            );
+            capacityCooldownUntil = Math.max(
+                capacityCooldownUntil,
+                Date.now() + fallbackCooldownMs
+            );
+            logger.warn(
+                `Aguardando ${(fallbackCooldownMs / 1000).toFixed(1)}s antes do fallback `
+                + 'para evitar nova rajada sobre a cota compartilhada.'
+            );
+        }
+        console.log(`  ↪️ Tentando modelo fallback: ${fallbackModelName}...`);
+        const { model: fallbackModel } = createModel(generationOverrides, fallbackModelName);
+        return generateRewriteOnce(
+            fallbackModel,
+            fallbackModelName,
+            fullPrompt,
+            { ...context, maxRequestRetries: 0 }
+        );
     }
 }
 
-function calculateMaxOutputTokens(content, maxRatio = config.outputPolicy.maxOutputRatio) {
+function calculateMaxOutputTokens(
+    content,
+    maxRatio = config.outputPolicy.maxOutputRatio
+) {
     const proportionalBudget = Math.ceil(
-        estimateTokens(content) * maxRatio * config.outputPolicy.maxOutputTokenMultiplier
+        estimateTokens(content)
+        * maxRatio
+        * config.outputPolicy.maxOutputTokenMultiplier
+        + config.outputPolicy.fixedOutputReserveTokens
+    );
+    const baseBudget = Math.max(
+        config.outputPolicy.minOutputTokens,
+        proportionalBudget
     );
 
     return Math.min(
         config.generationConfig.maxOutputTokens,
-        Math.max(config.outputPolicy.minOutputTokens, proportionalBudget)
+        config.outputPolicy.maxOutputTokensPerRequest,
+        baseBudget
     );
 }
 
@@ -181,10 +441,13 @@ function getRetryInstruction(failure) {
     switch (failure?.reason) {
         case GENERATION_FAILURE.MAX_TOKENS:
             return 'A tentativa anterior foi truncada. Produza uma versão completa e concisa em uma única resposta, sem planejamento ou raciocínio interno.';
+        case GENERATION_FAILURE.FINISH_REASON:
+            return `A tentativa anterior foi interrompida pelo modelo (${failure.finishReason || 'motivo não informado'}). Entregue o Markdown completo, sem reproduzir longos trechos literalmente e sem incluir conteúdo externo.`;
         case GENERATION_FAILURE.TOO_SHORT:
         case GENERATION_FAILURE.EMPTY:
             return 'A tentativa anterior omitiu conteúdo. Preserve todos os conceitos, valores, exemplos e exceções presentes no texto fornecido.';
         case GENERATION_FAILURE.TOO_LONG:
+        case GENERATION_FAILURE.REPETITION_LOOP:
             return 'A tentativa anterior expandiu excessivamente o material. Não acrescente conteúdo externo, não repita informações e use recursos didáticos apenas quando indispensáveis.';
         case GENERATION_FAILURE.THINKING_LEAK:
             return 'Entregue exclusivamente o Markdown final, sem planejamento, análise interna ou comentários sobre o processo de reescrita.';
@@ -195,10 +458,36 @@ function getRetryInstruction(failure) {
     }
 }
 
+function getContentScaleInstruction(content) {
+    const contentTokens = estimateTokens(content);
+    if (contentTokens < 500) {
+        return [
+            '## ESCALA DESTA ENTRADA',
+            `Este trecho possui aproximadamente ${contentTokens} tokens.`,
+            'Não crie Mermaid, flashcards, tabelas, quadros-resumo ou exemplos novos. '
+                + 'Apenas reescreva e organize integralmente o conteúdo fornecido.',
+        ].join('\n');
+    }
+    if (contentTokens < 2000) {
+        return [
+            '## ESCALA DESTA ENTRADA',
+            `Este trecho possui aproximadamente ${contentTokens} tokens.`,
+            'Use no máximo um recurso didático opcional e somente se ele for indispensável. '
+                + 'Priorize a reescrita completa do conteúdo.',
+        ].join('\n');
+    }
+    return [
+        '## ESCALA DESTA ENTRADA',
+        `Este trecho possui aproximadamente ${contentTokens} tokens.`,
+        'Dimensione os recursos opcionais ao tamanho do trecho e preserve espaço suficiente para concluir todo o conteúdo.',
+    ].join('\n');
+}
+
 function buildAttemptPrompt(prompt, content, lastFailure) {
     const retryInstruction = getRetryInstruction(lastFailure);
     return [
         prompt,
+        getContentScaleInstruction(content),
         retryInstruction ? `## CORREÇÃO DA NOVA TENTATIVA\n${retryInstruction}` : '',
         content,
     ].filter(Boolean).join('\n\n');
@@ -215,6 +504,9 @@ function getRecoverySubdivision(block, error, depth = 0) {
     const recoverableReasons = new Set([
         GENERATION_FAILURE.MAX_TOKENS,
         GENERATION_FAILURE.TOO_LONG,
+        GENERATION_FAILURE.REPETITION_LOOP,
+        GENERATION_FAILURE.INVALID_STRUCTURE,
+        GENERATION_FAILURE.FINISH_REASON,
     ]);
     const blockTokens = estimateTokens(block);
 
@@ -223,6 +515,10 @@ function getRecoverySubdivision(block, error, depth = 0) {
         || !recoverableReasons.has(error?.details?.reason)
         || depth >= config.processing.maxBlockSubdivisionDepth
         || blockTokens <= config.processing.minRecoveryBlockTokens
+        || (
+            error?.details?.reason === GENERATION_FAILURE.FINISH_REASON
+            && !RECOVERABLE_FINISH_REASONS.has(error?.details?.finishReason)
+        )
     ) {
         return null;
     }
@@ -259,123 +555,126 @@ async function generateValidatedRewrite(content, prompt, options = {}) {
     const minRatio = options.minOutputRatio ?? 0.75;
     const maxRatio = options.maxOutputRatio ?? config.outputPolicy.maxOutputRatio;
     const label = options.label ?? 'conteúdo';
-    const allowContinuation = options.allowContinuation === true
-        && estimateTokens(content) >= config.retry.continuationMinInputTokens;
-    const maxContinuationCount = allowContinuation ? config.retry.maxContinuationCount : 0;
-    const maxOutputTokens = calculateMaxOutputTokens(content, maxRatio);
+    const primaryModelName = options.modelName ?? config.model;
+    const primaryLocation = options.modelLocation ?? config.location;
     let lastFailure = null;
-    let fallbackActivated = false;
+    let useOutputFallback = false;
 
     for (let attempt = 1; attempt <= maxAttempts; attempt++) {
-        if (attempt > 1 && [
-            GENERATION_FAILURE.MAX_TOKENS,
-            GENERATION_FAILURE.TOO_LONG,
-        ].includes(lastFailure?.reason)) {
-            fallbackActivated = true;
-        }
-        const modelName = fallbackActivated
-            ? config.fallbackModel
-            : config.model;
-        const { model } = createModel({
+        const maxOutputTokens = calculateMaxOutputTokens(content, maxRatio);
+        const modelName = useOutputFallback ? config.fallbackModel : primaryModelName;
+        const modelLocation = useOutputFallback ? config.location : primaryLocation;
+        useOutputFallback = false;
+        const generationOverrides = {
             maxOutputTokens,
-            ...(attempt > 1 ? { temperature: 0.2 } : {}),
-        }, modelName);
-
-        let accumulated = '';
-        let continuationCount = 0;
-        let promptToSend = buildAttemptPrompt(prompt, content, lastFailure);
-        let lastUsageMetadata = {};
-
-        while (continuationCount <= maxContinuationCount) {
-            console.log(`Usando modelo: ${modelName} (${label}, tentativa ${attempt}${continuationCount ? `, continuação ${continuationCount}` : ''})`);
-
-            const result = await generateRewriteOnce(model, modelName, promptToSend, {
+            ...(attempt > 1 ? { temperature: 0.1 } : {}),
+        };
+        const { model } = createModel(generationOverrides, modelName, modelLocation);
+        const promptToSend = buildAttemptPrompt(prompt, content, lastFailure);
+        console.log(`Usando modelo: ${modelName} (${label}, tentativa ${attempt}/${maxAttempts}, limite ${maxOutputTokens} tokens)`);
+        const generationExecutor = options.generationExecutor
+            || generateRewriteWithCapacityFallback;
+        const result = await generationExecutor(
+            model,
+            modelName,
+            generationOverrides,
+            promptToSend,
+            {
                 attempt,
-                continuation: continuationCount,
-            });
-            const { text, finishReason, usageMetadata } = result;
-            lastUsageMetadata = usageMetadata;
-            accumulated = accumulated ? `${accumulated}\n\n${text}` : text;
-
-            if (isOutputTooLong(content, accumulated, maxRatio)) {
-                lastFailure = {
-                    reason: GENERATION_FAILURE.TOO_LONG,
-                    attempt,
-                    finishReason,
-                    originalLength: content.length,
-                    outputLength: accumulated.length,
-                    usageMetadata: lastUsageMetadata,
-                };
-                console.log(`  ⚠️ Saída excessiva em ${label}; descartando a tentativa integral.`);
-                break;
+                continuation: 0,
+                budget: options.budget,
+                workUnitId: options.workUnitId,
+                parentWorkUnitId: options.parentWorkUnitId,
+                recoveryDepth: options.recoveryDepth,
+                maxOutputTokens,
+                sourceContent: content,
             }
+        );
+        const { text: accumulated, finishReason, usageMetadata = {} } = result;
+        const repetition = detectRepetitionLoop(accumulated, content);
 
-            if (finishReason === 'MAX_TOKENS') {
-                apiStats.truncatedResponses++;
-                global.performanceLogger?.recordGenerationEvent('truncatedResponses');
-
-                if (allowContinuation && continuationCount < maxContinuationCount) {
-                    continuationCount++;
-                    apiStats.continuations++;
-                    global.performanceLogger?.recordGenerationEvent('continuations');
-                    console.log('  ⚠️ Resposta truncada; solicitando continuação controlada...');
-                    promptToSend = `${prompt}\n\nContinue a reescrita sem repetir trechos. Entregue somente o Markdown restante.\n\n--- FINAL JÁ REESCRITO ---\n${accumulated.slice(-2500)}\n\n--- CONTEÚDO ORIGINAL ---\n${content}`;
-                    continue;
-                }
-
-                lastFailure = {
-                    reason: GENERATION_FAILURE.MAX_TOKENS,
-                    attempt,
-                    finishReason,
-                    originalLength: content.length,
-                    outputLength: accumulated.length,
-                    usageMetadata: lastUsageMetadata,
-                };
-                console.log(`  ⚠️ Resposta truncada em ${label}; descartando a tentativa integral.`);
-                break;
-            }
-            break;
+        if (finishReason === 'MAX_TOKENS') {
+            apiStats.truncatedResponses++;
+            global.performanceLogger?.recordGenerationEvent('truncatedResponses');
         }
 
-        if (lastFailure?.attempt === attempt && lastFailure.reason === GENERATION_FAILURE.MAX_TOKENS) {
-            await waitForValidationRetry(attempt, maxAttempts, 1);
-            continue;
-        }
-
-        if (!accumulated.trim()) {
+        // MAX_TOKENS também pode encerrar uma expansão ou repetição patológica.
+        // Classificar primeiro o conteúdo preserva a causa real para o fallback.
+        if (repetition.detected) {
+            apiStats.repetitionLoops++;
+            global.performanceLogger?.recordGenerationEvent('repetitionLoops');
             lastFailure = {
-                reason: GENERATION_FAILURE.EMPTY,
+                reason: GENERATION_FAILURE.REPETITION_LOOP,
                 attempt,
-                originalLength: content.length,
-                outputLength: 0,
-                usageMetadata: lastUsageMetadata,
-            };
-        } else if (isThinkingLeak(accumulated)) {
-            lastFailure = {
-                reason: GENERATION_FAILURE.THINKING_LEAK,
-                attempt,
+                finishReason: finishReason || null,
+                details: `repetição de ${(repetition.duplicateRatio * 100).toFixed(1)}% em ${repetition.duplicateUnits} unidades`,
+                maxOutputTokens,
                 originalLength: content.length,
                 outputLength: accumulated.length,
-                usageMetadata: lastUsageMetadata,
-            };
-        } else if (isOutputTooShort(content, accumulated, minRatio)) {
-            lastFailure = {
-                reason: GENERATION_FAILURE.TOO_SHORT,
-                attempt,
-                originalLength: content.length,
-                outputLength: accumulated.length,
-                usageMetadata: lastUsageMetadata,
+                usageMetadata,
             };
         } else if (isOutputTooLong(content, accumulated, maxRatio)) {
             lastFailure = {
                 reason: GENERATION_FAILURE.TOO_LONG,
                 attempt,
+                finishReason: finishReason || null,
+                maxOutputTokens,
                 originalLength: content.length,
                 outputLength: accumulated.length,
-                usageMetadata: lastUsageMetadata,
+                usageMetadata,
+            };
+        } else if (finishReason === 'MAX_TOKENS') {
+            lastFailure = {
+                reason: GENERATION_FAILURE.MAX_TOKENS,
+                attempt,
+                finishReason,
+                maxOutputTokens,
+                originalLength: content.length,
+                outputLength: accumulated.length,
+                usageMetadata,
+            };
+        } else if (!isSuccessfulFinishReason(finishReason)) {
+            lastFailure = {
+                reason: GENERATION_FAILURE.FINISH_REASON,
+                attempt,
+                finishReason: finishReason || 'FINISH_REASON_UNSPECIFIED',
+                details: `Motivo de término retornado pelo Vertex AI: ${finishReason || 'não informado'}.`,
+                maxOutputTokens,
+                originalLength: content.length,
+                outputLength: accumulated.length,
+                usageMetadata,
+            };
+        } else if (!accumulated.trim()) {
+            lastFailure = {
+                reason: GENERATION_FAILURE.EMPTY,
+                attempt,
+                maxOutputTokens,
+                originalLength: content.length,
+                outputLength: 0,
+                usageMetadata,
+            };
+        } else if (isThinkingLeak(accumulated)) {
+            lastFailure = {
+                reason: GENERATION_FAILURE.THINKING_LEAK,
+                attempt,
+                maxOutputTokens,
+                originalLength: content.length,
+                outputLength: accumulated.length,
+                usageMetadata,
+            };
+        } else if (isOutputTooShort(content, accumulated, minRatio)) {
+            lastFailure = {
+                reason: GENERATION_FAILURE.TOO_SHORT,
+                attempt,
+                maxOutputTokens,
+                originalLength: content.length,
+                outputLength: accumulated.length,
+                usageMetadata,
             };
         } else {
-            const outputValidation = validateGeneratedContent(accumulated);
+            const outputValidation = validateGeneratedContent(accumulated, {
+                sourceMarkdown: content,
+            });
             const headingCoverage = validateSourceHeadingCoverage(content, accumulated);
             if (outputValidation.valid && headingCoverage.valid) {
                 logger.info(`${label} reescrito com sucesso (${accumulated.length} caracteres)`);
@@ -386,171 +685,189 @@ async function generateValidatedRewrite(content, prompt, options = {}) {
                 reason: GENERATION_FAILURE.INVALID_STRUCTURE,
                 attempt,
                 details: [...outputValidation.issues, ...headingCoverage.issues].join(' '),
+                maxOutputTokens,
                 originalLength: content.length,
                 outputLength: accumulated.length,
-                usageMetadata: lastUsageMetadata,
+                usageMetadata,
             };
         }
 
         apiStats.validationFailures++;
         global.performanceLogger?.recordGenerationEvent('validationFailures');
         logger.warn(`Saída rejeitada em ${label}: ${lastFailure.reason}${lastFailure.details ? ` - ${lastFailure.details}` : ''}`);
-        console.log(`  ⚠️ Saída rejeitada (${lastFailure.reason}), retentando (${attempt}/${maxAttempts})...`);
-        await waitForValidationRetry(attempt, maxAttempts, lastFailure.reason === GENERATION_FAILURE.TOO_SHORT ? 3 : 1);
+        console.log(`  ⚠️ Saída rejeitada em ${label} (${lastFailure.reason}).`);
+
+        const requiresImmediateSubdivision = new Set([
+            GENERATION_FAILURE.MAX_TOKENS,
+            GENERATION_FAILURE.TOO_LONG,
+            GENERATION_FAILURE.REPETITION_LOOP,
+            GENERATION_FAILURE.FINISH_REASON,
+        ]).has(lastFailure.reason);
+        const canTryOutputFallback = requiresImmediateSubdivision
+            && attempt < maxAttempts
+            && options.allowOutputFallback !== false
+            && primaryModelName === config.model
+            && modelName === primaryModelName
+            && config.fallbackModel
+            && config.fallbackModel !== config.model;
+        if (canTryOutputFallback) {
+            useOutputFallback = true;
+            logger.warn(
+                `${label} será tentado no modelo fallback ${config.fallbackModel} `
+                + 'antes de qualquer subdivisão.'
+            );
+            console.log(
+                `  ↪️ Tentando ${config.fallbackModel} com o mesmo limite antes de subdividir...`
+            );
+            await waitForValidationRetry(attempt, maxAttempts, 0);
+            continue;
+        }
+        if (requiresImmediateSubdivision) break;
+
+        const validationRetryDelaySeconds = options.validationRetryDelaySeconds
+            ?? (lastFailure.reason === GENERATION_FAILURE.TOO_SHORT ? 3 : 1);
+        await waitForValidationRetry(attempt, maxAttempts, validationRetryDelaySeconds);
     }
 
     const finalReason = lastFailure?.reason || 'desconhecido';
     const error = new Error(
         `Falha ao reescrever ${label} após ${maxAttempts} tentativas. `
         + `Última rejeição: ${finalReason}; saída ${lastFailure?.outputLength ?? 0}/${lastFailure?.originalLength ?? content.length} caracteres.`
+        + `${lastFailure?.maxOutputTokens ? ` Orçamento final: ${lastFailure.maxOutputTokens} tokens.` : ''}`
+        + `${lastFailure?.details ? ` Detalhes: ${lastFailure.details}` : ''}`
     );
     error.code = 'PYGEM_OUTPUT_INVALID';
     error.details = lastFailure;
     throw error;
 }
 
-async function rewriteBlockWithRecovery(block, prompt, label, depth = 0) {
+async function rewriteBlockWithRecovery(block, prompt, label, options = {}) {
+    const depth = options.depth ?? 0;
+    const minOutputRatio = options.minOutputRatio ?? 0.7;
+    const workUnitId = options.workUnitId ?? 'unit';
+    const basePrompt = options.basePrompt ?? prompt;
     try {
         return await generateValidatedRewrite(block, prompt, {
             label,
-            minOutputRatio: 0.7,
+            minOutputRatio,
+            budget: options.budget,
+            workUnitId,
+            parentWorkUnitId: options.parentWorkUnitId,
+            recoveryDepth: depth,
+            generationExecutor: options.generationExecutor,
         });
     } catch (error) {
         const fragments = getRecoverySubdivision(block, error, depth);
-        if (!fragments) throw error;
+        if (!fragments) {
+            const recoveryReasons = new Set([
+                GENERATION_FAILURE.MAX_TOKENS,
+                GENERATION_FAILURE.TOO_LONG,
+                GENERATION_FAILURE.REPETITION_LOOP,
+                GENERATION_FAILURE.INVALID_STRUCTURE,
+            ]);
+            const canUseRecoveryModel = options.allowRecoveryModel !== false
+                && error?.code === 'PYGEM_OUTPUT_INVALID'
+                && recoveryReasons.has(error?.details?.reason)
+                && config.recoveryModel
+                && config.recoveryModel !== config.model;
+            if (!canUseRecoveryModel) throw error;
+
+            apiStats.retries++;
+            global.performanceLogger?.recordGenerationEvent('retries');
+            logger.warn(
+                `${label} chegou ao menor fragmento recuperável; tentando `
+                + `${config.recoveryModel} em ${config.recoveryLocation}.`
+            );
+            console.log(
+                `  ↪️ Fragmento mínimo: recuperação final com `
+                + `${config.recoveryModel} (${config.recoveryLocation})...`
+            );
+            return generateValidatedRewrite(block, prompt, {
+                label: `${label}, recuperação final`,
+                minOutputRatio,
+                maxAttempts: 1,
+                modelName: config.recoveryModel,
+                modelLocation: config.recoveryLocation,
+                allowOutputFallback: false,
+                budget: options.budget,
+                workUnitId,
+                parentWorkUnitId: options.parentWorkUnitId,
+                recoveryDepth: depth,
+                generationExecutor: options.generationExecutor,
+            });
+        }
+
+        apiStats.recoverySubdivisions++;
+        global.performanceLogger?.recordGenerationEvent('recoverySubdivisions');
 
         logger.warn(
             `${label} será subdividido em ${fragments.length} fragmentos após ${error.details.reason}.`
         );
         console.log(
-            `  ↪️ ${label} truncado; recuperando em ${fragments.length} fragmentos menores...`
+            `  ↪️ ${label} rejeitado (${error.details.reason}); `
+            + `recuperando em ${fragments.length} fragmentos menores...`
         );
 
         const rewrittenFragments = [];
         for (let index = 0; index < fragments.length; index++) {
             const fragmentLabel = `${label}, fragmento ${index + 1}/${fragments.length}`;
+            const childWorkUnitId = `${workUnitId}.${index + 1}`;
             const fragmentPrompt = [
-                prompt,
+                basePrompt,
                 '## RECUPERAÇÃO DE BLOCO',
                 `Reescreva somente o fragmento ${index + 1} de ${fragments.length} abaixo. `
-                    + 'Não antecipe nem repita os demais fragmentos.',
+                    + 'Não antecipe nem repita os demais fragmentos. '
+                    + 'Não crie recursos didáticos novos; preserve somente os já existentes.',
             ].join('\n\n');
             rewrittenFragments.push(
                 await rewriteBlockWithRecovery(
                     fragments[index],
                     fragmentPrompt,
                     fragmentLabel,
-                    depth + 1
+                    {
+                        ...options,
+                        depth: depth + 1,
+                        minOutputRatio,
+                        workUnitId: childWorkUnitId,
+                        parentWorkUnitId: workUnitId,
+                        basePrompt,
+                    }
                 )
             );
         }
 
-        return rewrittenFragments.join('\n\n');
+        const combined = rewrittenFragments.join('\n\n');
+        assertSourceHeadingCoverage(block, combined);
+        return combined;
     }
 }
 
-const errorMatches = (error, pattern) => pattern.test(`${error?.status || ''} ${error?.message || ''}`);
-const isAuthenticationError = (error) => errorMatches(error, /401|UNAUTHENTICATED|default credentials|invalid_grant/i);
-const isPermissionError = (error) => errorMatches(error, /403|PERMISSION_DENIED/i);
-const isQuotaError = (error) => errorMatches(error, /429|RESOURCE_EXHAUSTED|quota|Too Many Requests/i);
-const isUnavailableError = (error) => errorMatches(error, /503|UNAVAILABLE|Service Unavailable|overloaded/i);
-
 const geminiService = {
-    async rewriteContent(content, prompt, retryCount = 0) {
-        const maxRetries = config.retry.maxFileRetries;
-
+    async rewriteContent(content, prompt) {
         try {
             if (!config.hasValidVertexConfig()) {
                 throw new Error('Configuração do Vertex AI incompleta. Verifique o arquivo .env.');
             }
-
-            logger.info(`Iniciando chamada ao Vertex AI (tentativa ${retryCount + 1}/${maxRetries + 1})`);
-
-            return await generateValidatedRewrite(content, prompt, { label: 'conteúdo' });
-
+            const budget = createRequestBudget('conteúdo em passagem única');
+            logger.info('Iniciando reescrita em passagem única com orçamento global de chamadas.');
+            return await rewriteBlockWithRecovery(content, prompt, 'conteúdo', {
+                budget,
+                workUnitId: 'single',
+                minOutputRatio: 0.75,
+                basePrompt: prompt,
+            });
         } catch (error) {
-            logger.error(`Falha no fluxo de reescrita (tentativa de arquivo ${retryCount + 1}): ${error.message}`);
-            
-            // Tratamento de erros específicos do Vertex AI.
+            logger.error(`Falha no fluxo de reescrita: ${error.message}`);
             if (isAuthenticationError(error)) {
                 throw new Error('Falha na autenticação ADC. Execute "gcloud auth application-default login" ou configure uma identidade de serviço segura.');
-            } else if (isPermissionError(error)) {
-                throw new Error('Acesso negado pelo Vertex AI. Verifique a API Vertex AI e o papel Vertex AI User.');
-            } else if (isQuotaError(error)) {
-                if (retryCount < maxRetries) {
-                    logger.info('Cota/limite temporário do Vertex AI atingido; aguardando antes de tentar novamente.');
-                    console.log('⚠️ Limite temporário do Vertex AI atingido; tentando novamente...');
-                    global.performanceLogger?.recordDelay(config.delays.onQuotaError, 'quota');
-                    await sleep(config.delays.onQuotaError / 1000);
-                    return await this.rewriteContent(content, prompt, retryCount + 1);
-                }
-                
-                throw new Error('Cota ou limite do Vertex AI excedido. Verifique as cotas do projeto no Google Cloud Console.');
-            } else if (isUnavailableError(error)) {
-                // Modelo sobrecarregado: tenta o modelo fallback no mesmo projeto Vertex AI.
-                console.log('⚠️ MODELO SOBRECARREGADO - Tentando alternativas...');
-
-                if (retryCount < maxRetries) {
-                    logger.info('Tentando com modelo fallback devido à sobrecarga...');
-                    const simpleModel = config.fallbackModel;
-                    console.log(`🔄 Tentando com modelo ${simpleModel}...`);
-
-                    try {
-                        const model = getGenerativeModel({
-                            model: simpleModel,
-                            generationConfig: config.generationConfig,
-                            safetySettings: config.safetySettings
-                        });
-
-                        const fallbackResult = await generateRewriteOnce(
-                            model,
-                            simpleModel,
-                            `${prompt}\n\n${content}`,
-                            { attempt: retryCount + 1 }
-                        );
-                        const fallbackContent = fallbackResult.text;
-
-                        if (fallbackResult.finishReason === 'MAX_TOKENS') {
-                            apiStats.truncatedResponses++;
-                            global.performanceLogger?.recordGenerationEvent('truncatedResponses');
-                            throw new Error('Resposta do modelo fallback truncada por MAX_TOKENS.');
-                        }
-
-                        if (isOutputTooLong(content, fallbackContent, config.outputPolicy.maxOutputRatio)) {
-                            throw new Error('Resposta do modelo fallback excedeu o limite proporcional de saída.');
-                        }
-                        const fallbackValidation = validateGeneratedContent(fallbackContent);
-                        if (!fallbackValidation.valid) {
-                            apiStats.validationFailures++;
-                            global.performanceLogger?.recordGenerationEvent('validationFailures');
-                            throw new Error(`Resposta do modelo fallback inválida: ${fallbackValidation.issues.join(' ')}`);
-                        }
-
-                        console.log(`✅ Sucesso com modelo fallback: ${simpleModel}`);
-                        logger.info(`Conteúdo gerado com modelo fallback (${fallbackContent.length} caracteres)`);
-                        return fallbackContent;
-                    } catch (fallbackError) {
-                        logger.error(`Erro no modelo fallback: ${fallbackError.message}`);
-                        global.performanceLogger?.recordDelay(config.delays.onError, 'error');
-                        await sleep(config.delays.onError / 1000);
-                        return await this.rewriteContent(content, prompt, retryCount + 1);
-                    }
-                }
-
-                throw new Error('Modelo do Vertex AI temporariamente indisponível. Aguarde alguns minutos ou configure GEMINI_FALLBACK_MODEL.');
-            } else if (errorMatches(error, /safety|SAFETY/i)) {
-                throw new Error('Conteúdo bloqueado pelas configurações de segurança');
-            } else if (error.code === 'PYGEM_OUTPUT_INVALID') {
-                throw error;
-            } else if (retryCount < maxRetries) {
-                // Retry genérico para outros erros
-                logger.info(`Tentando novamente em ${config.delays.onError / 1000} segundos...`);
-                global.performanceLogger?.recordDelay(config.delays.onError, 'error');
-                await sleep(config.delays.onError / 1000);
-                return await this.rewriteContent(content, prompt, retryCount + 1);
-            } else {
-                throw new Error(`Falha ao reescrever o conteúdo após ${maxRetries + 1} tentativas: ${error.message}`);
             }
+            if (isPermissionError(error)) {
+                throw new Error('Acesso negado pelo Vertex AI. Verifique a API Vertex AI e o papel Vertex AI User.');
+            }
+            if (errorMatches(error, /safety|SAFETY/i)) {
+                throw new Error('Conteúdo bloqueado pelas configurações de segurança');
+            }
+            throw error;
         }
     },
 
@@ -563,81 +880,141 @@ const geminiService = {
             logger.info(`Iniciando processamento em blocos no Vertex AI para arquivo: ${fileName}`);
 
             const blocks = splitContentIntoBlocks(content, config.processing.blockInputTokens);
-            let finalContent = '';
+            const rewrittenBlocks = [];
             let processedBlocks = 0;
             let blockErrors = 0;
+            const failedBlockDetails = [];
+            const fileCallLimit = Math.ceil(
+                blocks.length * config.retry.maxApiCallsPerFileMultiplier
+            ) + config.retry.maxApiCallsPerFileReserve;
+            const fileBudget = createRequestBudget(
+                `arquivo ${fileName}`,
+                fileCallLimit
+            );
+            const checkpoint = config.checkpoint.enabled
+                ? createRewriteCheckpoint({
+                    content,
+                    prompt,
+                    fileName,
+                    blocks,
+                    model: config.model,
+                    blockInputTokens: config.processing.blockInputTokens,
+                    generationSignature: {
+                        temperature: config.generationConfig.temperature,
+                        maxOutputRatio: config.outputPolicy.maxOutputRatio,
+                        outputMultiplier: config.outputPolicy.maxOutputTokenMultiplier,
+                        maxOutputTokensPerRequest: config.outputPolicy.maxOutputTokensPerRequest,
+                    },
+                })
+                : null;
 
             console.log(`📄 Processando ${blocks.length} blocos para o arquivo: ${fileName}`);
+            if (checkpoint?.count()) {
+                console.log(`  ♻️ Checkpoint encontrado: ${checkpoint.count()} bloco(s) concluído(s) serão reutilizados.`);
+            }
 
             for (let i = 0; i < blocks.length; i++) {
                 const block = blocks[i];
                 const blockNumber = i + 1;
+                const workUnitId = `b${String(blockNumber).padStart(3, '0')}`;
                 const blockPrompt = getBlockPrompt(prompt, blockNumber, blocks.length);
+                const cachedBlock = checkpoint?.get(blockNumber);
+                if (cachedBlock) {
+                    rewrittenBlocks.push(cachedBlock);
+                    processedBlocks++;
+                    console.log(`  ♻️ Bloco ${blockNumber}/${blocks.length} restaurado do checkpoint.`);
+                    continue;
+                }
+
+                const budget = createRequestBudget(
+                    `bloco ${blockNumber}/${blocks.length}`,
+                    config.retry.maxApiCallsPerRootBlock,
+                    fileBudget
+                );
+                global.performanceLogger?.logBlockStart(
+                    blockNumber,
+                    blocks.length,
+                    estimateTokens(block),
+                    { workUnitId }
+                );
 
                 try {
                     console.log(`  🔄 Bloco ${blockNumber}/${blocks.length} (~${estimateTokens(block)} tokens)`);
-                    global.performanceLogger?.logBlockStart(
-                        blockNumber,
-                        blocks.length,
-                        estimateTokens(block)
-                    );
-
                     const rewrittenBlock = await rewriteBlockWithRecovery(
                         block,
                         blockPrompt,
-                        `bloco ${blockNumber}/${blocks.length}`
+                        `bloco ${blockNumber}/${blocks.length}`,
+                        {
+                            budget,
+                            workUnitId,
+                            basePrompt: blockPrompt,
+                        }
                     );
-
-                    if (finalContent) finalContent += '\n\n';
-                    finalContent += rewrittenBlock;
+                    rewrittenBlocks.push(rewrittenBlock);
                     processedBlocks++;
-
-                    console.log(`  ✅ Bloco ${blockNumber} processado (${rewrittenBlock.length} caracteres)`);
-                    logger.info(`Bloco ${blockNumber} processado - ${rewrittenBlock.length} caracteres`);
-
-                    if (global.performanceLogger) {
-                        global.performanceLogger.logBlockEnd(blockNumber, true, null, rewrittenBlock.length);
-                    }
-
-                    if (i < blocks.length - 1) {
-                        const delayMs = config.getAdaptiveDelay
-                            ? config.getAdaptiveDelay(estimateTokens(block), 'betweenBlocks')
-                            : config.delays.betweenBlocks;
-                        const delaySeconds = Math.max(0, Math.round(delayMs / 1000));
-                        console.log(`  ⏳ Aguardando ${delaySeconds}s antes do próximo bloco...`);
-                        global.performanceLogger?.recordDelay(delayMs, 'betweenBlocks');
-                        await sleep(delaySeconds);
-                    }
+                    checkpoint?.save(blockNumber, rewrittenBlock);
+                    global.performanceLogger?.logBlockEnd(
+                        workUnitId,
+                        true,
+                        null,
+                        rewrittenBlock.length,
+                        { apiCallsUsed: budget.used }
+                    );
+                    console.log(`  ✅ Bloco ${blockNumber} processado em ${budget.used} chamada(s) (${rewrittenBlock.length} caracteres)`);
                 } catch (blockError) {
                     blockErrors++;
-                    logger.error(`Erro no bloco ${blockNumber}: ${blockError.message}`);
-                    console.log(`  ❌ Erro no bloco ${blockNumber}: ${blockError.message}`);
-
-                    if (global.performanceLogger) {
-                        global.performanceLogger.logBlockEnd(blockNumber, false, blockError.message, 0);
-                    }
-
-                    const error = new Error(
-                        `Falha definitiva no bloco ${blockNumber}/${blocks.length}; `
-                        + `nenhum resultado parcial foi aceito. ${blockError.message}`
-                    );
-                    error.code = 'PYGEM_BLOCK_REWRITE_FAILED';
-                    error.details = {
+                    processedBlocks++;
+                    apiStats.preservedBlocks++;
+                    global.performanceLogger?.recordGenerationEvent('preservedBlocks');
+                    rewrittenBlocks.push(block.trim());
+                    failedBlockDetails.push({
                         blockNumber,
                         totalBlocks: blocks.length,
-                        cause: blockError.details || null,
-                    };
-                    throw error;
+                        workUnitId,
+                        apiCallsUsed: budget.used,
+                        error: blockError.message,
+                    });
+                    global.performanceLogger?.logBlockEnd(
+                        workUnitId,
+                        false,
+                        blockError.message,
+                        0,
+                        { apiCallsUsed: budget.used, preservedOriginal: true }
+                    );
+                    logger.error(`Erro definitivo e limitado no bloco ${blockNumber}: ${blockError.message}`);
+                    console.log(`  📝 Bloco ${blockNumber} preservado sem reescrita após ${budget.used} chamada(s).`);
+                }
+
+                if (i < blocks.length - 1) {
+                    const delayMs = config.getAdaptiveDelay
+                        ? config.getAdaptiveDelay(estimateTokens(block), 'betweenBlocks')
+                        : config.delays.betweenBlocks;
+                    const delaySeconds = Math.max(0, Math.round(delayMs / 1000));
+                    console.log(`  ⏳ Aguardando ${delaySeconds}s antes do próximo bloco...`);
+                    global.performanceLogger?.recordDelay(delayMs, 'betweenBlocks');
+                    await sleep(delaySeconds);
                 }
             }
 
+            const finalContent = rewrittenBlocks.join('\n\n');
+
             console.log(`\n📊 Resumo do processamento para ${fileName}:`);
             console.log(`   ✅ Blocos processados: ${processedBlocks}/${blocks.length}`);
-            console.log(`   ❌ Erros: ${blockErrors}`);
+            console.log(`   📝 Blocos preservados sem reescrita: ${blockErrors}`);
+            console.log(`   ☁️ Chamadas usadas: ${fileBudget.used}/${fileBudget.maximum}`);
 
             logger.info(`Processamento em blocos concluído para ${fileName}: ${processedBlocks}/${blocks.length} blocos, ${blockErrors} erros`);
 
             assertSourceHeadingCoverage(content, finalContent);
+
+            if (failedBlockDetails.length > 0) {
+                logger.warn(`Blocos preservados sem reescrita: ${failedBlockDetails.map(detail => `#${detail.blockNumber}`).join(', ')}`);
+                logger.warn(`Checkpoint mantido para retomar somente os blocos pendentes: ${checkpoint?.filePath || 'desabilitado'}`);
+                throw createPartialRewriteError(failedBlockDetails, blocks.length);
+            } else {
+                checkpoint?.clear();
+            }
+
             return finalContent;
 
         } catch (error) {
@@ -665,10 +1042,11 @@ const geminiService = {
             
             const model = getGenerativeModel({ 
                 model: currentModel,
-                generationConfig: {
+                generationConfig: buildGenerationConfig({
                     temperature: 0.1,
                     maxOutputTokens: 100
-                }
+                }),
+                safetySettings: config.safetySettings,
             });
 
             const result = await model.generateContent('Teste de conexão');
@@ -952,11 +1330,21 @@ const geminiService = {
     refreshGeminiClient,
     diagnostics: {
         GENERATION_FAILURE,
+        buildGenerationConfig,
         calculateMaxOutputTokens,
+        calculateRequestRetryDelayMs,
+        isTransientCapacityError,
+        isRequestTimeoutError,
+        isSuccessfulFinishReason,
         getRetryInstruction,
+        getContentScaleInstruction,
         buildAttemptPrompt,
         shouldRewriteInBlocks,
         getRecoverySubdivision,
+        createRequestBudget,
+        createPartialRewriteError,
+        generateValidatedRewrite,
+        rewriteBlockWithRecovery,
     },
     shouldRewriteInBlocks,
 };

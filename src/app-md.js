@@ -3,13 +3,18 @@ require('dotenv').config();
 const fs = require('fs');
 const path = require('path');
 const readline = require('readline-sync');
-const { validateDirectory, assertValidGeneratedContent } = require('./utils/validation');
+const {
+    validateDirectory,
+    assertValidGeneratedContent,
+    assertSourceHeadingCoverage,
+} = require('./utils/validation');
 const {
     readMdFiles,
     createOutputDirectory,
     readAllMdFilesInSubdirectories,
     writeRewrittenFileAtomic,
     writeDirectoryProcessingManifest,
+    getReusableManifestEntries,
 } = require('./services/fileServiceMd');
 const { estimateTokens } = require('./services/tokenService');
 const geminiService = require('./services/geminiService');
@@ -93,9 +98,12 @@ async function main() {
         logger.info(connectionTest.message);
         console.log(`✅ Conectado ao Vertex AI (modelo: ${connectionTest.model})\n`);
 
-        // Pergunta sobre desligamento automático
-        const shutdownOption = readline.question('🔌 Desligar o computador automaticamente após o processamento? (s/N): ').toLowerCase();
-        autoShutdown = shutdownOption === 's' || shutdownOption === 'sim' || shutdownOption === 'y' || shutdownOption === 'yes';
+        // Execuções automatizadas não devem ficar bloqueadas em um prompt sem TTY.
+        const configuredShutdown = process.env.PYGEM_AUTO_SHUTDOWN?.trim().toLowerCase();
+        const shutdownOption = configuredShutdown ?? readline
+            .question('🔌 Desligar o computador automaticamente após o processamento? (s/N): ')
+            .toLowerCase();
+        autoShutdown = ['true', '1', 's', 'sim', 'y', 'yes'].includes(shutdownOption);
         
         if (autoShutdown) {
             console.log('⚠️  O computador será desligado automaticamente após o processamento!');
@@ -188,14 +196,32 @@ async function main() {
             const dirInfo = directoriesWithFiles[dirIndex];
             const dirPath = dirInfo.directory;
             const mdFiles = dirInfo.files;
-            const dirSuccessfulEntries = [];
+            const reusableEntries = getReusableManifestEntries(
+                outputDirectory,
+                inputDirectory,
+                dirPath,
+                mdFiles
+            );
+            const reusablePaths = new Set(
+                reusableEntries.map(entry => path.resolve(entry.filePath))
+            );
+            const dirSuccessfulEntries = [...reusableEntries];
             const dirFailedEntries = [];
+            successCount += reusableEntries.length;
             
             console.log(`\n📁 Processando diretório (${dirIndex + 1}/${directoriesWithFiles.length}): ${dirPath}`);
             logger.info(`Processando diretório: ${dirPath} com ${mdFiles.length} arquivos`);
+            if (reusableEntries.length > 0) {
+                console.log(
+                    `  ♻️ ${reusableEntries.length} arquivo(s) já publicado(s) e inalterado(s) `
+                    + 'serão reutilizados pelo manifesto.'
+                );
+            }
             
             // Analisar arquivos para decidir estratégia de processamento
-            const inspectedFiles = mdFiles.map(file => {
+            const inspectedFiles = mdFiles
+                .filter(file => !reusablePaths.has(path.resolve(file)))
+                .map(file => {
                 try {
                     const content = fs.readFileSync(file, 'utf-8');
                     const tokens = estimateTokens(content);
@@ -355,7 +381,10 @@ async function main() {
                     
                     rewrittenContent = enhancementResult.processedContent;
                     rewrittenContent = finalizeRewrittenContent(rewrittenContent, prepared);
-                    assertValidGeneratedContent(rewrittenContent);
+                    assertValidGeneratedContent(rewrittenContent, {
+                        sourceMarkdown: content,
+                    });
+                    assertSourceHeadingCoverage(content, rewrittenContent);
                     
                     // Log das mudanças aplicadas
                     if (enhancementResult.hasChanges) {
@@ -486,6 +515,9 @@ async function main() {
         console.log(`❌ Erros reais da API: ${finalApiStats.apiErrors}`);
         console.log(`⚠️ Rejeições locais: ${finalApiStats.validationFailures}`);
         console.log(`✂️ Respostas truncadas: ${finalApiStats.truncatedResponses}`);
+        console.log(`🔂 Loops de repetição detectados: ${finalApiStats.repetitionLoops}`);
+        console.log(`↪️ Subdivisões de recuperação: ${finalApiStats.recoverySubdivisions}`);
+        console.log(`📝 Blocos originais preservados: ${finalApiStats.preservedBlocks}`);
         console.log(`🔁 Retentativas de geração: ${finalApiStats.retries}`);
         console.log(`🎯 Modelo: ${finalApiStats.model}`);
         console.log(`☁️ Projeto/região: ${finalApiStats.project}/${finalApiStats.location}`);

@@ -1,5 +1,6 @@
 const fs = require('fs');
 const path = require('path');
+const crypto = require('crypto');
 const logger = require('../utils/logger');
 const { assertValidGeneratedContent } = require('../utils/validation');
 
@@ -202,7 +203,10 @@ const writeRewrittenFileAtomic = (
     originalFilePath,
     content
 ) => {
-    assertValidGeneratedContent(content);
+    const sourceMarkdown = fs.existsSync(originalFilePath)
+        ? fs.readFileSync(originalFilePath, 'utf8')
+        : '';
+    assertValidGeneratedContent(content, { sourceMarkdown });
     const outputFilePath = getRewrittenOutputPath(
         outputDirectory,
         inputDirectory,
@@ -248,10 +252,15 @@ const writeDirectoryProcessingManifest = (
         const resolvedPath = path.resolve(filePath);
         const successfulEntry = successfulByPath.get(resolvedPath);
         if (successfulEntry) {
+            const sourceContent = fs.readFileSync(filePath);
             successfulFiles.push({
                 fileName: path.basename(filePath),
                 filePath,
                 outputFilePath: successfulEntry.outputFilePath,
+                sourceFingerprint: {
+                    size: sourceContent.length,
+                    sha256: crypto.createHash('sha256').update(sourceContent).digest('hex'),
+                },
             });
             return;
         }
@@ -287,6 +296,55 @@ const writeDirectoryProcessingManifest = (
         complete: manifest.status === 'complete',
         manifestPath,
     };
+};
+
+const getReusableManifestEntries = (
+    outputDirectory,
+    inputDirectory,
+    sourceDirectory,
+    expectedFiles
+) => {
+    const relativeDirectory = getRelativePathInsideRoot(inputDirectory, sourceDirectory);
+    const manifestPath = path.join(outputDirectory, relativeDirectory, '_pygem.manifest.json');
+    if (!fs.existsSync(manifestPath)) return [];
+
+    try {
+        const manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf8'));
+        if (path.resolve(manifest.sourceDirectory || '') !== path.resolve(sourceDirectory)) {
+            return [];
+        }
+
+        const expectedPaths = new Set(expectedFiles.map(filePath => path.resolve(filePath)));
+        return (manifest.successfulFiles || []).flatMap(entry => {
+            const sourcePath = path.resolve(entry.filePath || '');
+            const outputPath = path.resolve(entry.outputFilePath || '');
+            if (
+                !expectedPaths.has(sourcePath)
+                || !fs.existsSync(sourcePath)
+                || !fs.existsSync(outputPath)
+            ) {
+                return [];
+            }
+
+            const sourceContent = fs.readFileSync(sourcePath);
+            const currentFingerprint = {
+                size: sourceContent.length,
+                sha256: crypto.createHash('sha256').update(sourceContent).digest('hex'),
+            };
+            const recordedFingerprint = entry.sourceFingerprint;
+            const fingerprintMatches = recordedFingerprint
+                ? recordedFingerprint.size === currentFingerprint.size
+                    && recordedFingerprint.sha256 === currentFingerprint.sha256
+                : fs.statSync(outputPath).mtimeMs >= fs.statSync(sourcePath).mtimeMs;
+
+            return fingerprintMatches
+                ? [{ filePath: sourcePath, outputFilePath: outputPath }]
+                : [];
+        });
+    } catch (error) {
+        logger.warn(`Manifesto anterior não pôde ser reutilizado (${manifestPath}): ${error.message}`);
+        return [];
+    }
 };
 
 const buildSubdirectoryAggregate = (expectedFiles, successfulEntries, failedEntries = []) => {
@@ -450,6 +508,7 @@ module.exports = {
     getRewrittenOutputPath,
     writeRewrittenFileAtomic,
     writeDirectoryProcessingManifest,
+    getReusableManifestEntries,
     buildSubdirectoryAggregate,
     writeSubdirectoryAggregate
 };

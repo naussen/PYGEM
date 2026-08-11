@@ -2,18 +2,25 @@ require('dotenv').config();
 
 const baseConfig = require('./gemini');
 
+function getPositiveIntegerEnv(name, fallback) {
+    const parsed = Number(process.env[name]);
+    return Number.isInteger(parsed) && parsed >= 1 ? parsed : fallback;
+}
+
 const config = {
     ...baseConfig,
     generationConfig: {
         ...baseConfig.generationConfig,
-        temperature: 0.7,
-        topP: 0.95,
-        topK: 64,
+        // O modo otimizado reduz esperas, mas não aumenta a aleatoriedade da
+        // reescrita: fidelidade e estabilidade devem ser iguais nos dois modos.
+        temperature: baseConfig.generationConfig.temperature,
+        topP: baseConfig.generationConfig.topP,
+        topK: baseConfig.generationConfig.topK,
     },
     delays: {
-        betweenFiles: 3000,
-        betweenBlocks: 20000,
-        betweenDirectories: 10000,
+        betweenFiles: 2000,
+        betweenBlocks: 3000,
+        betweenDirectories: 5000,
         onError: 8000,
         onQuotaError: 60000,
         adaptive: {
@@ -27,14 +34,10 @@ const config = {
     },
     retry: {
         ...baseConfig.retry,
-        maxRetries: 3,
-        backoffMultiplier: 1.5,
-        initialDelay: 5000,
-        maxDelay: 60000,
     },
     batch: {
         enabled: true,
-        maxConcurrent: 2,
+        maxConcurrent: getPositiveIntegerEnv('PYGEM_MAX_CONCURRENT_REQUESTS', 1),
         smallFileThreshold: 2000,
         enableParallelProcessing: true,
     },
@@ -51,17 +54,12 @@ const config = {
         }
 
         if (delayType === 'betweenBlocks') {
-            if (tokens < 2000) return 15000;
-            if (tokens < 4000) return 18000;
-            return 20000;
+            if (tokens < 1000) return 2000;
+            if (tokens < 2000) return 3000;
+            return 5000;
         }
 
         return this.delays[delayType];
-    },
-
-    getRetryDelay(retryCount) {
-        const delay = this.retry.initialDelay * Math.pow(this.retry.backoffMultiplier, retryCount);
-        return Math.min(delay, this.retry.maxDelay);
     },
 };
 

@@ -22,6 +22,9 @@ class PerformanceLogger {
             truncatedResponses: 0,
             retries: 0,
             continuations: 0,
+            repetitionLoops: 0,
+            recoverySubdivisions: 0,
+            preservedBlocks: 0,
             totalProcessingTime: 0,
             totalDelayTime: 0,
             averageFileTime: 0,
@@ -86,7 +89,7 @@ class PerformanceLogger {
         console.log(`📊 [${this.sessionId}] Iniciando processamento: ${fileName} (${estimatedTokens} tokens, modo: ${this.currentFile.processingMode})`);
     }
 
-    logBlockStart(blockNumber, totalBlocks, blockTokens) {
+    logBlockStart(blockNumber, totalBlocks, blockTokens, metadata = {}) {
         if (!this.currentFile) {
             this.stats.totalBlocks++;
             return;
@@ -96,6 +99,7 @@ class PerformanceLogger {
             blockNumber,
             totalBlocks,
             blockTokens,
+            workUnitId: metadata.workUnitId || `block-${blockNumber}`,
             startTime: Date.now(),
             startTimeISO: new Date().toISOString()
         };
@@ -106,10 +110,16 @@ class PerformanceLogger {
         console.log(`📊 [${this.sessionId}] Bloco ${blockNumber}/${totalBlocks} iniciado (${blockTokens} tokens)`);
     }
 
-    logBlockEnd(blockNumber, success, errorMessage = null, outputLength = 0) {
+    logBlockEnd(identifier, success, errorMessage = null, outputLength = 0, metadata = {}) {
         if (!this.currentFile) return;
-        
-        const block = this.currentFile.blocks.find(b => b.blockNumber === blockNumber);
+
+        const block = [...this.currentFile.blocks].reverse().find(candidate => (
+            candidate.endTime == null
+            && (
+                candidate.workUnitId === identifier
+                || candidate.blockNumber === identifier
+            )
+        ));
         if (block) {
             block.endTime = Date.now();
             block.endTimeISO = new Date().toISOString();
@@ -117,9 +127,10 @@ class PerformanceLogger {
             block.success = success;
             block.errorMessage = errorMessage;
             block.outputLength = outputLength;
+            Object.assign(block, metadata);
             block.tokensPerSecond = block.duration > 0 ? (block.blockTokens / (block.duration / 1000)) : 0;
             
-            console.log(`📊 [${this.sessionId}] Bloco ${blockNumber} ${success ? 'concluído' : 'falhou'} (${block.duration}ms, ${block.tokensPerSecond.toFixed(2)} tokens/s)`);
+            console.log(`📊 [${this.sessionId}] Unidade ${block.workUnitId} ${success ? 'concluída' : 'falhou'} (${block.duration}ms, ${block.tokensPerSecond.toFixed(2)} tokens/s)`);
         }
     }
 
@@ -132,6 +143,12 @@ class PerformanceLogger {
         success,
         errorMessage = null,
         attempt = null,
+        requestAttempt = null,
+        budgetCallNumber = null,
+        workUnitId = null,
+        parentWorkUnitId = null,
+        recoveryDepth = 0,
+        maxOutputTokens = null,
         continuation = 0,
         finishReason = null,
         promptTokenCount = null,
@@ -151,6 +168,12 @@ class PerformanceLogger {
             success,
             errorMessage,
             attempt,
+            requestAttempt,
+            budgetCallNumber,
+            workUnitId,
+            parentWorkUnitId,
+            recoveryDepth,
+            maxOutputTokens,
             continuation,
             finishReason,
             usageMetadata: {
@@ -180,6 +203,9 @@ class PerformanceLogger {
             'truncatedResponses',
             'retries',
             'continuations',
+            'repetitionLoops',
+            'recoverySubdivisions',
+            'preservedBlocks',
         ]);
 
         if (supportedEvents.has(type)) {
@@ -408,16 +434,20 @@ class PerformanceLogger {
             });
         }
 
-        if (this.stats.validationFailures > 0 || this.stats.truncatedResponses > 0) {
+        if (
+            this.stats.validationFailures > 0
+            || this.stats.truncatedResponses > 0
+            || this.stats.repetitionLoops > 0
+        ) {
             recommendations.push({
                 category: 'output-reliability',
                 priority: 'high',
                 title: 'Melhorar estabilidade da saída gerada',
-                description: `${this.stats.validationFailures} rejeições locais e ${this.stats.truncatedResponses} respostas truncadas`,
+                description: `${this.stats.validationFailures} rejeições locais, ${this.stats.truncatedResponses} respostas truncadas e ${this.stats.repetitionLoops} loops de repetição`,
                 actions: [
-                    'Revisar finishReason, comprimento e motivo de validação nos logs',
-                    'Ajustar orçamento de saída ou divisão em blocos quando houver MAX_TOKENS',
-                    'Reprocessar somente os arquivos que falharam'
+                    'Revisar workUnitId, finishReason, maxOutputTokens e motivo de validação nos logs',
+                    'Não aumentar o orçamento após MAX_TOKENS; revisar o fragmento que acionou a subdivisão',
+                    'Reexecutar para aproveitar checkpoints e processar somente os blocos pendentes'
                 ]
             });
         } else if (this.stats.failedFiles > 0 && this.stats.apiErrors === 0) {
@@ -429,6 +459,20 @@ class PerformanceLogger {
                 actions: [
                     'Revisar validação, leitura e gravação dos arquivos afetados',
                     'Consultar a mensagem detalhada de cada arquivo no relatório'
+                ]
+            });
+        }
+
+        if (this.stats.preservedBlocks > 0) {
+            recommendations.push({
+                category: 'partial-rewrite',
+                priority: 'high',
+                title: 'Retomar arquivos incompletos pelo checkpoint',
+                description: `${this.stats.preservedBlocks} blocos foram preservados sem reescrita e impediram a publicação do arquivo`,
+                actions: [
+                    'Corrigir primeiro eventuais erros de autenticação, região ou cota',
+                    'Executar novamente a mesma entrada sem alterar prompt ou modelo',
+                    'Confirmar no resumo que nenhum bloco original foi preservado'
                 ]
             });
         }
@@ -491,6 +535,9 @@ class PerformanceLogger {
         console.log(`☁️  Erros reais da API: ${this.stats.apiErrors}`);
         console.log(`⚠️  Rejeições locais: ${this.stats.validationFailures}`);
         console.log(`✂️  Respostas truncadas: ${this.stats.truncatedResponses}`);
+        console.log(`🔂 Loops de repetição detectados: ${this.stats.repetitionLoops}`);
+        console.log(`↪️  Subdivisões de recuperação: ${this.stats.recoverySubdivisions}`);
+        console.log(`📝 Blocos originais preservados: ${this.stats.preservedBlocks}`);
         console.log(`🔢 Total de tokens: ${this.stats.totalTokens.toLocaleString()}`);
         console.log(`⚡ Velocidade média: ${this.stats.averageTokensPerSecond.toFixed(2)} tokens/segundo`);
         console.log(`📊 Tempo médio por arquivo: ${this.formatDuration(this.stats.averageFileTime)}`);
