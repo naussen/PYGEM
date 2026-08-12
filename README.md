@@ -38,7 +38,7 @@ ADC usa a identidade local ou a identidade atribuída ao ambiente de execução.
 
 ## Instalação
 
-No diretório `C:\PYGEM`:
+No diretório `C:\PRO\pygem`:
 
 ```powershell
 npm install
