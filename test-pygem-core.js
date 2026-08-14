@@ -31,6 +31,7 @@ const {
     validateGeneratedContent,
     validateSourceHeadingCoverage,
 } = require('./src/utils/validation');
+const { normalizeUppercaseHeadings } = require('./src/utils/contentProcessor');
 
 assert.strictEqual(isOutputTooShort('a'.repeat(100), 'a'.repeat(80), 0.75), false);
 assert.strictEqual(isOutputTooShort('a'.repeat(1000), 'a'.repeat(350)), true);
@@ -45,6 +46,10 @@ assert.strictEqual(
     '@@@\n## Empresa e Empresário\n\nTexto.\n\n@@@\n## Registro\n\n@@@ ### Subtítulo'
 );
 assert.match(getBlockPrompt('Prompt', 2, 3), /não invente nem repita o marcador/u);
+assert.strictEqual(
+    normalizeUppercaseHeadings('## OPINIÃO DO AUDITOR (NBC TA)\n\nTexto.'),
+    '## Opinião do Auditor (NBC TA)\n\nTexto.'
+);
 
 const originalDocumentTitle = '@@@ LEI de Introdução: LINDB (ORIGINAL)';
 const auditoriaSource = '@@ AU DIT ORIA INT ERN A (N B C TI 01 )\n\nResumo.';

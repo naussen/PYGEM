@@ -16,6 +16,7 @@ const {
     validateSourceHeadingCoverage,
     assertSourceHeadingCoverage,
 } = require('../utils/validation');
+const { normalizeUppercaseHeadings } = require('../utils/contentProcessor');
 const { createRewriteCheckpoint } = require('./rewriteCheckpointService');
 let genAI = null;
 let recoveryGenAI = null;
@@ -672,13 +673,14 @@ async function generateValidatedRewrite(content, prompt, options = {}) {
                 usageMetadata,
             };
         } else {
-            const outputValidation = validateGeneratedContent(accumulated, {
+            const normalizedAccumulated = normalizeUppercaseHeadings(accumulated);
+            const outputValidation = validateGeneratedContent(normalizedAccumulated, {
                 sourceMarkdown: content,
             });
-            const headingCoverage = validateSourceHeadingCoverage(content, accumulated);
+            const headingCoverage = validateSourceHeadingCoverage(content, normalizedAccumulated);
             if (outputValidation.valid && headingCoverage.valid) {
-                logger.info(`${label} reescrito com sucesso (${accumulated.length} caracteres)`);
-                return accumulated;
+                logger.info(`${label} reescrito com sucesso (${normalizedAccumulated.length} caracteres)`);
+                return normalizedAccumulated;
             }
 
             lastFailure = {

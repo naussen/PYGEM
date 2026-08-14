@@ -6,6 +6,7 @@ const path = require('path');
 const geminiService = require('./geminiService');
 const { estimateTokens } = require('./tokenService');
 const { prepareContentForRewrite, finalizeRewrittenContent } = require('../utils/contentPreprocessor');
+const { normalizeUppercaseHeadings } = require('../utils/contentProcessor');
 const {
     assertValidGeneratedContent,
     assertSourceHeadingCoverage,
@@ -141,6 +142,7 @@ class ParallelProcessingService {
             }
 
             rewrittenContent = finalizeRewrittenContent(rewrittenContent, prepared);
+            rewrittenContent = normalizeUppercaseHeadings(rewrittenContent);
             assertValidGeneratedContent(rewrittenContent, {
                 sourceMarkdown: content,
             });

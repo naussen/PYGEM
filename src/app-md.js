@@ -20,7 +20,7 @@ const { estimateTokens } = require('./services/tokenService');
 const geminiService = require('./services/geminiService');
 const ParallelProcessingService = require('./services/parallelProcessingService');
 const { getRewritingPrompt } = require('./services/promptServiceMd');
-const { applyContentEnhancements } = require('./utils/contentProcessor');
+const { applyContentEnhancements, normalizeUppercaseHeadings } = require('./utils/contentProcessor');
 const { prepareContentForRewrite, finalizeRewrittenContent } = require('./utils/contentPreprocessor');
 const logger = require('./utils/logger');
 const powerService = require('./services/powerService');
@@ -381,6 +381,7 @@ async function main() {
                     
                     rewrittenContent = enhancementResult.processedContent;
                     rewrittenContent = finalizeRewrittenContent(rewrittenContent, prepared);
+                    rewrittenContent = normalizeUppercaseHeadings(rewrittenContent);
                     assertValidGeneratedContent(rewrittenContent, {
                         sourceMarkdown: content,
                     });
