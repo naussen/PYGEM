@@ -47,6 +47,19 @@ assert.strictEqual(
 assert.match(getBlockPrompt('Prompt', 2, 3), /não invente nem repita o marcador/u);
 
 const originalDocumentTitle = '@@@ LEI de Introdução: LINDB (ORIGINAL)';
+const auditoriaSource = '@@ AU DIT ORIA INT ERN A (N B C TI 01 )\n\nResumo.';
+const auditoriaPrepared = prepareContentForRewrite(auditoriaSource, '001_Auditoria.md');
+assert.strictEqual(
+    finalizeRewrittenContent('@@ Au dit oria int ern a (n b C TI 01 )\n\nResumo reescrito.', auditoriaPrepared),
+    '@@ Auditoria interna (NBC TI 01)\n\nResumo reescrito.'
+);
+assert.strictEqual(
+    finalizeRewrittenContent(
+        '@@ Título desformatado\n\nTexto.',
+        prepareContentForRewrite('@@ Título desformatado\n\nTexto.', 'outro.md')
+    ),
+    '@@ Título desformatado\n\nTexto.'
+);
 const sourceWithImmutableTitle = `${originalDocumentTitle}\n\n## Seção ORIGINAL\n\nTexto.`;
 const preparedWithImmutableTitle = prepareContentForRewrite(sourceWithImmutableTitle);
 assert.strictEqual(

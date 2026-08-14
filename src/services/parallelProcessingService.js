@@ -129,7 +129,7 @@ class ParallelProcessingService {
                 throw new Error('Arquivo vazio');
             }
 
-            const prepared = prepareContentForRewrite(rawContent);
+            const prepared = prepareContentForRewrite(rawContent, fileName);
             const content = prepared.text;
             const estimatedTokens = estimateTokens(content);
             

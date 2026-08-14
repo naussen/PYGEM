@@ -5,6 +5,37 @@
 const IMAGE_DEF_PATTERN = /^(\[image[^\]]*\]:\s*<data:image\/[^>]+>\s*)$/gm;
 const DOCUMENT_TITLE_PATTERN = /^@@@?[ \t]+(?!#)(\S.*?)[ \t]*$/;
 
+// Títulos editoriais da série Auditoria. O PYGEM preserva o nome do arquivo,
+// mas deve corrigir o metadado @@ quando a fonte vier com espaços inseridos
+// dentro das palavras. O escopo por arquivo evita alterar títulos legítimos de
+// outros conjuntos de documentos.
+const AUDITORIA_DOCUMENT_TITLES = new Map([
+    ['001_Auditoria.md', 'Auditoria interna (NBC TI 01)'],
+    ['002_Auditoria.md', 'Diferenças entre auditoria interna e externa'],
+    ['003_Auditoria.md', 'Requisitos para o exercício da auditoria (princípios éticos)'],
+    ['004_Auditoria.md', 'Objetivos gerais do auditor independente'],
+    ['005_Auditoria.md', 'Independência'],
+    ['006_Auditoria.md', 'Responsabilidade do auditor e da administração'],
+    ['007_Auditoria.md', 'Concordância com os termos (NBC TA 210)'],
+    ['008_Auditoria.md', 'Supervisão e controle de qualidade da auditoria das DCs'],
+    ['009_Auditoria.md', 'Materialidade e relevância'],
+    ['010_Auditoria.md', 'Planejamento da auditoria (NBC TA 300)'],
+    ['011_Auditoria.md', 'Controles internos'],
+    ['012_Auditoria.md', 'Erro e fraude (NBC TA 240 / NBC TI 01)'],
+    ['013_Auditoria.md', 'Risco de auditoria'],
+    ['014_Auditoria.md', 'Técnicas e procedimentos de auditoria'],
+    ['015_Auditoria.md', 'Evidências de auditoria'],
+    ['016_Auditoria.md', 'Amostragem'],
+    ['017_Auditoria.md', 'Documentação de auditoria – papéis de trabalho (NBC TA 230)'],
+    ['018_Auditoria.md', 'Estimativas contábeis (NBC TA 540)'],
+    ['019_Auditoria.md', 'Utilização do trabalho de outros profissionais'],
+    ['020_Auditoria.md', 'Transações com partes relacionadas (NBC TA 550)'],
+    ['021_Auditoria.md', 'Eventos subsequentes (NBC TA 560)'],
+    ['022_Auditoria.md', 'Relatório de auditoria (NBC TA 700, 701, 705 e 706)'],
+    ['023_Auditoria.md', 'Perícia contábil (apenas itens gerais)'],
+    ['024_Auditoria.md', 'Testes em áreas específicas'],
+]);
+
 function extractOriginalDocumentTitleLine(content) {
     const firstContentLine = String(content || '')
         .replace(/^\uFEFF/, '')
@@ -58,10 +89,11 @@ function restoreImageDefinitions(content, imageFooter) {
     return `${trimmed}\n\n${imageFooter}`;
 }
 
-function prepareContentForRewrite(content) {
+function prepareContentForRewrite(content, fileName = null) {
     return {
         ...extractImageDefinitions(content),
         originalDocumentTitleLine: extractOriginalDocumentTitleLine(content),
+        fileName,
     };
 }
 
@@ -72,13 +104,30 @@ function normalizeInlineTopicMarkers(content) {
     );
 }
 
+function normalizeAuditoriaDocumentTitle(content, fileName) {
+    const canonicalTitle = AUDITORIA_DOCUMENT_TITLES.get(fileName);
+    if (!canonicalTitle) return String(content || '');
+
+    const lines = String(content || '').split(/\r?\n/);
+    const titleIndex = lines.findIndex(line => DOCUMENT_TITLE_PATTERN.test(line.trim()));
+    if (titleIndex < 0) return String(content || '');
+
+    const marker = lines[titleIndex].trim().startsWith('@@@') ? '@@@' : '@@';
+    lines[titleIndex] = `${marker} ${canonicalTitle}`;
+    return lines.join('\n');
+}
+
 function finalizeRewrittenContent(rewritten, prepared) {
     const normalized = normalizeInlineTopicMarkers(rewritten);
     const titlePreserved = restoreOriginalDocumentTitle(
         normalized,
         prepared.originalDocumentTitleLine
     );
-    return restoreImageDefinitions(titlePreserved, prepared.imageFooter);
+    const normalizedDocumentTitle = normalizeAuditoriaDocumentTitle(
+        titlePreserved,
+        prepared.fileName
+    );
+    return restoreImageDefinitions(normalizedDocumentTitle, prepared.imageFooter);
 }
 
 const THINKING_LEAK_PATTERNS = [

@@ -348,7 +348,7 @@ async function main() {
                     logger.info(`Processando arquivo: ${file}`);
 
                     // Usa o conteúdo já carregado (sem definições base64 de imagem)
-                    const prepared = prepareContentForRewrite(fileData.content);
+                    const prepared = prepareContentForRewrite(fileData.content, fileName);
                     const content = prepared.text;
                     const estimatedTokens = estimateTokens(content);
                     console.log(`    📊 Arquivo contém aproximadamente ${estimatedTokens} tokens (${prepared.imageFooter ? 'imagens base64 separadas' : 'sem imagens base64'})`);
