@@ -10,7 +10,8 @@
 - Pacote 6 concluído no LEIAUT: divergência obrigatória bloqueia a publicação e a gravação é atômica.
 - Pacote 7 concluído no LEIAUT: `topic_slug` canônico, detecção conservadora de slugs suspeitos, conflitos por lote e mapa explícito de migração sem alteração de banco.
 - Pacote 8 concluído no PYGEM: fixtures artificiais dos pilotos e testes sem Vertex AI para contrato visual e bloqueios.
-- Pacotes 9 e 10 pendentes.
+- Pacote 9 em preflight: execução restrita aos pilotos 010, 022 e 023 preparada sem chamada externa; execução ao vivo depende de fontes reais e autorização explícita.
+- Pacote 10 pendente.
 
 ## 1. Objetivo
 
@@ -450,6 +451,13 @@ Cobrir:
 - preservação de saída antiga em falha.
 
 ### Pacote 9 — Pilotos 010, 022 e 023
+
+O preflight foi implementado em `src/visual/visualPilotRunner.js` e testado sem
+Vertex AI. Ele exige exatamente os três IDs, uma fonte Markdown por piloto,
+plano visual explícito e diretório de saída novo; registra hashes, modelo, seed
+e mantém `vertex_call_performed` e `import_performed` como `false`. A execução
+ao vivo permanece pendente porque as fontes reais completas e a autorização
+operacional não estão disponíveis neste workspace.
 
 Executar somente depois de todos os testes locais passarem.
 

@@ -1,5 +1,11 @@
 # Changelog
 
+## 2026-08-19 — preflight dos pilotos visuais
+
+- adiciona preflight restrito aos pilotos 010, 022 e 023;
+- registra hashes, modelo, seed e diretórios sem chamar Vertex AI nem importar resultados;
+- exige diretório de saída novo e preserva fontes originais.
+
 ## 2026-08-19 — fixtures visuais
 
 - adiciona fixtures artificiais dos pilotos 010, 022 e 023;
