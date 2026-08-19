@@ -6,7 +6,8 @@
 - Pacote 2 concluído: suporte ao relatório/plano visual no processamento principal do PYGEM.
 - Pacote 3 concluído: variantes determinísticas e semanticamente compatíveis para tabela, Mermaid e realce.
 - Pacote 4 concluído: detecção e validação de recursos visuais antes da publicação no PYGEM.
-- Pacotes 5 a 10 pendentes, começando pelo consumo do manifesto no LEIAUT.
+- Pacote 5 concluído no LEIAUT: leitura do plano/manifesto, instrução restrita e relatório de validação.
+- Pacotes 6 a 10 pendentes, começando pelo bloqueio anterior à publicação.
 
 ## 1. Objetivo
 
