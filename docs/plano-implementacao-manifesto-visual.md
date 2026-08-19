@@ -8,7 +8,8 @@
 - Pacote 4 concluído: detecção e validação de recursos visuais antes da publicação no PYGEM.
 - Pacote 5 concluído no LEIAUT: leitura do plano/manifesto, instrução restrita e relatório de validação.
 - Pacote 6 concluído no LEIAUT: divergência obrigatória bloqueia a publicação e a gravação é atômica.
-- Pacotes 7 a 10 pendentes, começando pela correção da autoridade de `topic_id`.
+- Pacote 7 concluído no LEIAUT: `topic_slug` canônico, detecção conservadora de slugs suspeitos, conflitos por lote e mapa explícito de migração sem alteração de banco.
+- Pacotes 8 a 10 pendentes.
 
 ## 1. Objetivo
 
@@ -382,6 +383,12 @@ Quando houver divergência obrigatória:
 - marcar a execução como falha no resumo do lote.
 
 ### Pacote 7 — Correção de `topic_id`
+
+Implementado em `C:\PRO\leiaut\src\visual\topicIdAuthority.js` e integrado ao
+processamento determinístico e ao fluxo Vertex AI. O LEIAUT rejeita slugs
+fragmentados ou ambíguos antes da publicação, bloqueia duplicidades no lote e
+oferece `buildTopicIdMigrationMap` para documentar alterações de IDs. Nenhuma
+migração de banco é executada automaticamente.
 
 Fonte de autoridade:
 
