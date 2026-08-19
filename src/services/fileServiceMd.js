@@ -1,5 +1,6 @@
 const fs = require('fs');
 const path = require('path');
+const crypto = require('crypto');
 const logger = require('../utils/logger');
 const { assertValidGeneratedContent } = require('../utils/validation');
 
@@ -165,6 +166,286 @@ const appendToSubdirectoryFile = (outputDirectory, subdirectoryPath, originalFil
     }
 };
 
+const getRelativePathInsideRoot = (rootDirectory, targetPath) => {
+    const relativePath = path.relative(
+        path.resolve(rootDirectory),
+        path.resolve(targetPath)
+    );
+
+    if (
+        relativePath === '..'
+        || relativePath.startsWith(`..${path.sep}`)
+        || path.isAbsolute(relativePath)
+    ) {
+        throw new Error(`Caminho fora do diretório de entrada: ${targetPath}`);
+    }
+
+    return relativePath;
+};
+
+const getRewrittenOutputPath = (outputDirectory, inputDirectory, originalFilePath) => {
+    const relativeSourcePath = getRelativePathInsideRoot(inputDirectory, originalFilePath);
+    const parsedPath = path.parse(relativeSourcePath);
+    return path.join(
+        outputDirectory,
+        parsedPath.dir,
+        `${parsedPath.name}_reescrito.md`
+    );
+};
+
+/**
+ * Publica um resultado validado de forma atômica, preservando a estrutura
+ * relativa da entrada para impedir colisões entre arquivos homônimos.
+ */
+const writeRewrittenFileAtomic = (
+    outputDirectory,
+    inputDirectory,
+    originalFilePath,
+    content
+) => {
+    const sourceMarkdown = fs.existsSync(originalFilePath)
+        ? fs.readFileSync(originalFilePath, 'utf8')
+        : '';
+    assertValidGeneratedContent(content, { sourceMarkdown });
+    const outputFilePath = getRewrittenOutputPath(
+        outputDirectory,
+        inputDirectory,
+        originalFilePath
+    );
+    const outputParent = path.dirname(outputFilePath);
+    const temporaryOutputPath = `${outputFilePath}.${process.pid}.${Date.now()}.tmp`;
+
+    fs.mkdirSync(outputParent, { recursive: true });
+    try {
+        fs.writeFileSync(temporaryOutputPath, content, 'utf8');
+        fs.renameSync(temporaryOutputPath, outputFilePath);
+    } finally {
+        if (fs.existsSync(temporaryOutputPath)) fs.unlinkSync(temporaryOutputPath);
+    }
+
+    logger.info(`Arquivo individual publicado: ${outputFilePath}`);
+    return outputFilePath;
+};
+
+const writeDirectoryProcessingManifest = (
+    outputDirectory,
+    inputDirectory,
+    sourceDirectory,
+    expectedFiles,
+    successfulEntries,
+    failedEntries = []
+) => {
+    const relativeDirectory = getRelativePathInsideRoot(inputDirectory, sourceDirectory);
+    const manifestDirectory = path.join(outputDirectory, relativeDirectory);
+    const manifestPath = path.join(manifestDirectory, '_pygem.manifest.json');
+    const temporaryManifestPath = `${manifestPath}.${process.pid}.${Date.now()}.tmp`;
+    const successfulByPath = new Map(
+        successfulEntries.map(entry => [path.resolve(entry.filePath), entry])
+    );
+    const failedByPath = new Map(
+        failedEntries.map(entry => [path.resolve(entry.filePath), entry])
+    );
+    const successfulFiles = [];
+    const failedFiles = [];
+
+    expectedFiles.forEach(filePath => {
+        const resolvedPath = path.resolve(filePath);
+        const successfulEntry = successfulByPath.get(resolvedPath);
+        if (successfulEntry) {
+            const sourceContent = fs.readFileSync(filePath);
+            successfulFiles.push({
+                fileName: path.basename(filePath),
+                filePath,
+                outputFilePath: successfulEntry.outputFilePath,
+                sourceFingerprint: {
+                    size: sourceContent.length,
+                    sha256: crypto.createHash('sha256').update(sourceContent).digest('hex'),
+                },
+            });
+            return;
+        }
+
+        const failedEntry = failedByPath.get(resolvedPath);
+        failedFiles.push({
+            fileName: path.basename(filePath),
+            filePath,
+            error: failedEntry?.error || 'Arquivo sem resultado publicado nesta execução',
+        });
+    });
+
+    const manifest = {
+        status: failedFiles.length === 0 ? 'complete' : 'incomplete',
+        generatedAt: new Date().toISOString(),
+        sourceDirectory,
+        expectedFiles: expectedFiles.length,
+        successfulFiles,
+        failedFiles,
+    };
+
+    fs.mkdirSync(manifestDirectory, { recursive: true });
+    try {
+        fs.writeFileSync(temporaryManifestPath, JSON.stringify(manifest, null, 2), 'utf8');
+        fs.renameSync(temporaryManifestPath, manifestPath);
+    } finally {
+        if (fs.existsSync(temporaryManifestPath)) fs.unlinkSync(temporaryManifestPath);
+    }
+    logger.info(`Manifesto do diretório salvo: ${manifestPath}`);
+
+    return {
+        ...manifest,
+        complete: manifest.status === 'complete',
+        manifestPath,
+    };
+};
+
+const getReusableManifestEntries = (
+    outputDirectory,
+    inputDirectory,
+    sourceDirectory,
+    expectedFiles
+) => {
+    const relativeDirectory = getRelativePathInsideRoot(inputDirectory, sourceDirectory);
+    const manifestPath = path.join(outputDirectory, relativeDirectory, '_pygem.manifest.json');
+    if (!fs.existsSync(manifestPath)) return [];
+
+    try {
+        const manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf8'));
+        if (path.resolve(manifest.sourceDirectory || '') !== path.resolve(sourceDirectory)) {
+            return [];
+        }
+
+        const expectedPaths = new Set(expectedFiles.map(filePath => path.resolve(filePath)));
+        return (manifest.successfulFiles || []).flatMap(entry => {
+            const sourcePath = path.resolve(entry.filePath || '');
+            const outputPath = path.resolve(entry.outputFilePath || '');
+            if (
+                !expectedPaths.has(sourcePath)
+                || !fs.existsSync(sourcePath)
+                || !fs.existsSync(outputPath)
+            ) {
+                return [];
+            }
+
+            const sourceContent = fs.readFileSync(sourcePath);
+            const currentFingerprint = {
+                size: sourceContent.length,
+                sha256: crypto.createHash('sha256').update(sourceContent).digest('hex'),
+            };
+            const recordedFingerprint = entry.sourceFingerprint;
+            const fingerprintMatches = recordedFingerprint
+                ? recordedFingerprint.size === currentFingerprint.size
+                    && recordedFingerprint.sha256 === currentFingerprint.sha256
+                : fs.statSync(outputPath).mtimeMs >= fs.statSync(sourcePath).mtimeMs;
+
+            return fingerprintMatches
+                ? [{ filePath: sourcePath, outputFilePath: outputPath }]
+                : [];
+        });
+    } catch (error) {
+        logger.warn(`Manifesto anterior não pôde ser reutilizado (${manifestPath}): ${error.message}`);
+        return [];
+    }
+};
+
+const buildSubdirectoryAggregate = (expectedFiles, successfulEntries, failedEntries = []) => {
+    const successfulByPath = new Map(
+        successfulEntries.map(entry => [path.resolve(entry.filePath), entry])
+    );
+    const failuresByPath = new Map(
+        failedEntries.map(entry => [path.resolve(entry.filePath), entry])
+    );
+    const orderedSuccesses = [];
+    const failures = [];
+
+    expectedFiles.forEach(filePath => {
+        const resolvedPath = path.resolve(filePath);
+        const successfulEntry = successfulByPath.get(resolvedPath);
+
+        if (successfulEntry) {
+            assertValidGeneratedContent(successfulEntry.content);
+            orderedSuccesses.push(successfulEntry);
+            return;
+        }
+
+        const failedEntry = failuresByPath.get(resolvedPath);
+        failures.push({
+            fileName: path.basename(filePath),
+            filePath,
+            error: failedEntry?.error || 'Arquivo sem resultado validado nesta execução',
+        });
+    });
+
+    const complete = failures.length === 0
+        && orderedSuccesses.length === expectedFiles.length;
+
+    return {
+        complete,
+        content: orderedSuccesses.map(entry => entry.content).join('\n\n'),
+        successfulFiles: orderedSuccesses.map(entry => ({
+            fileName: path.basename(entry.filePath),
+            filePath: entry.filePath,
+        })),
+        failedFiles: failures,
+    };
+};
+
+const writeSubdirectoryAggregate = (
+    outputDirectory,
+    subdirectoryPath,
+    expectedFiles,
+    successfulEntries,
+    failedEntries = []
+) => {
+    const aggregate = buildSubdirectoryAggregate(
+        expectedFiles,
+        successfulEntries,
+        failedEntries
+    );
+    const subdirName = path.basename(subdirectoryPath);
+    const outputFilePath = path.join(
+        outputDirectory,
+        `${subdirName}_reescrito.md`
+    );
+    const manifestPath = path.join(
+        outputDirectory,
+        `${subdirName}_reescrito.manifest.json`
+    );
+    const manifest = {
+        status: aggregate.complete ? 'complete' : 'incomplete',
+        generatedAt: new Date().toISOString(),
+        sourceDirectory: subdirectoryPath,
+        outputFile: aggregate.complete ? outputFilePath : null,
+        previousCompleteOutputPreserved: !aggregate.complete && fs.existsSync(outputFilePath),
+        expectedFiles: expectedFiles.length,
+        successfulFiles: aggregate.successfulFiles,
+        failedFiles: aggregate.failedFiles,
+    };
+
+    if (aggregate.complete) {
+        const temporaryOutputPath = `${outputFilePath}.${process.pid}.${Date.now()}.tmp`;
+        try {
+            fs.writeFileSync(temporaryOutputPath, aggregate.content, 'utf8');
+            fs.renameSync(temporaryOutputPath, outputFilePath);
+        } finally {
+            if (fs.existsSync(temporaryOutputPath)) fs.unlinkSync(temporaryOutputPath);
+        }
+        logger.info(`Arquivo agregado completo publicado: ${outputFilePath}`);
+    } else {
+        logger.warn(
+            `Agregado incompleto não publicado para ${subdirectoryPath}; consulte o manifesto de falhas.`
+        );
+    }
+
+    fs.writeFileSync(manifestPath, JSON.stringify(manifest, null, 2), 'utf8');
+    logger.info(`Manifesto do agregado salvo: ${manifestPath}`);
+
+    return {
+        ...aggregate,
+        outputFilePath: manifest.outputFile,
+        manifestPath,
+    };
+};
+
 const createOutputDirectory = (outputDirectory) => {
     try {
         logger.info(`Verificando diretório de saída: ${outputDirectory}`);
@@ -223,5 +504,11 @@ module.exports = {
     getFileStats,
     getAllSubdirectories,
     readAllMdFilesInSubdirectories,
-    appendToSubdirectoryFile
+    appendToSubdirectoryFile,
+    getRewrittenOutputPath,
+    writeRewrittenFileAtomic,
+    writeDirectoryProcessingManifest,
+    getReusableManifestEntries,
+    buildSubdirectoryAggregate,
+    writeSubdirectoryAggregate
 };

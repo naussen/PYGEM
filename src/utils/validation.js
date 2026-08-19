@@ -2,6 +2,7 @@ const MERMAID_HEADER_PATTERN = /^(?:flowchart\s+(?:TD|TB|BT|LR|RL)|graph\s+(?:TD
 const MERMAID_EDGE_PATTERN = /(?:-->|---|==>|-\.->|--o|--x)/;
 const MAX_MARKDOWN_LINE_LENGTH = 20000;
 const MAX_HORIZONTAL_WHITESPACE_RUN = 1000;
+const IMAGE_DEFINITION_PATTERN = /^\[image[^\]]*\]:\s*<data:image\/[^>]+>\s*$/i;
 const KNOWN_ACRONYMS = new Set([
     'AFO', 'CIDE', 'CLT', 'CPC', 'CPP', 'CTN', 'CVM', 'DRE', 'FRF',
     'ICMS', 'ISS', 'LDO', 'LINDB', 'LOA', 'LRF', 'NBC', 'PPA', 'RT',
@@ -149,7 +150,118 @@ function isPredominantlyUppercaseTitle(title, contextualAcronyms = new Set()) {
     return uppercaseCount / letters.length >= 0.8;
 }
 
-function validateMarkdownQuality(markdown) {
+function normalizeHeadingKey(title) {
+    return String(title || '')
+        .replace(/\bDOUTINA\b/gi, 'DOUTRINA')
+        .replace(/[*_`]/g, '')
+        .normalize('NFD')
+        .replace(/[\u0300-\u036f]/g, '')
+        .toLowerCase()
+        .replace(/^modulo\s+\d+\s*:\s*/, '')
+        .replace(/[^\p{L}\p{N}]+/gu, ' ')
+        .replace(/\s+/g, ' ')
+        .trim();
+}
+
+function normalizeSourceFingerprint(value) {
+    return String(value || '')
+        .normalize('NFD')
+        .replace(/[\u0300-\u036f]/g, '')
+        .toLowerCase()
+        .replace(/[^\p{L}\p{N}]+/gu, '');
+}
+
+function isSourceDerivedUppercaseTitle(title, sourceMarkdown) {
+    const titleFingerprint = normalizeSourceFingerprint(title);
+    if (titleFingerprint.length < 5) return false;
+    return normalizeSourceFingerprint(sourceMarkdown).includes(titleFingerprint);
+}
+
+function extractStructuralHeadings(markdown) {
+    const headings = [];
+    let fence = null;
+
+    String(markdown || '').split(/\r?\n/).forEach(line => {
+        const trimmed = line.trim();
+        const fenceMatch = trimmed.match(/^(`{3,}|~{3,})/);
+        if (fenceMatch) {
+            const marker = fenceMatch[1];
+            if (!fence) fence = marker[0];
+            else if (marker[0] === fence) fence = null;
+            return;
+        }
+        if (fence) return;
+
+        const heading = trimmed.match(/^(#{1,3})(?!#)\s+(.+?)\s*#*\s*$/);
+        if (!heading) return;
+        headings.push({
+            level: heading[1].length,
+            title: heading[2].trim(),
+            key: normalizeHeadingKey(heading[2]),
+        });
+    });
+
+    return headings;
+}
+
+function validateSourceHeadingCoverage(sourceMarkdown, generatedMarkdown) {
+    const expected = extractStructuralHeadings(sourceMarkdown);
+    if (expected.length === 0) return { valid: true, issues: [], expected, actual: [] };
+
+    const actual = extractStructuralHeadings(generatedMarkdown);
+    let expectedIndex = 0;
+    actual.forEach(heading => {
+        const current = expected[expectedIndex];
+        if (current && heading.level === current.level && heading.key === current.key) {
+            expectedIndex++;
+        }
+    });
+
+    const missing = expected.slice(expectedIndex);
+    const issues = missing.length === 0
+        ? []
+        : [
+            'cobertura estrutural incompleta; títulos ausentes ou fora de ordem: '
+            + missing.map(heading => `${'#'.repeat(heading.level)} ${heading.title}`).join(' | '),
+        ];
+
+    const expectedMainTopics = expected.filter(heading => heading.level === 2);
+    if (expectedMainTopics.length > 0) {
+        const actualMainTopics = actual.filter(heading => heading.level === 2);
+        const hasExactMainTopicStructure = expectedMainTopics.length === actualMainTopics.length
+            && expectedMainTopics.every((heading, index) => (
+                heading.key === actualMainTopics[index]?.key
+            ));
+        if (!hasExactMainTopicStructure) {
+            issues.push(
+                'estrutura de títulos ## divergente da fonte; '
+                + `esperado: ${expectedMainTopics.map(heading => heading.title).join(' | ')}; `
+                + `recebido: ${actualMainTopics.map(heading => heading.title).join(' | ')}.`
+            );
+        }
+    }
+
+    return {
+        valid: issues.length === 0,
+        issues,
+        expected,
+        actual,
+        missing,
+    };
+}
+
+function assertSourceHeadingCoverage(sourceMarkdown, generatedMarkdown) {
+    const result = validateSourceHeadingCoverage(sourceMarkdown, generatedMarkdown);
+    if (!result.valid) {
+        const error = new Error(`Conteúdo gerado incompleto: ${result.issues.join(' ')}`);
+        error.code = 'PYGEM_HEADING_COVERAGE_INVALID';
+        error.details = result;
+        throw error;
+    }
+    return generatedMarkdown;
+}
+
+function validateMarkdownQuality(markdown, options = {}) {
     const issues = [];
     const source = String(markdown || '');
     const lines = source.split(/\r?\n/);
@@ -159,6 +271,9 @@ function validateMarkdownQuality(markdown) {
 
     lines.forEach((line, index) => {
         const lineNumber = index + 1;
+        // Definições base64 são separadas antes da IA e restauradas intactas no
+        // final; não devem ser confundidas com linha Markdown patológica.
+        if (IMAGE_DEFINITION_PATTERN.test(line.trim())) return;
         if (line.length > MAX_MARKDOWN_LINE_LENGTH) {
             issues.push(
                 `linha ${lineNumber}: possui ${line.length} caracteres; limite seguro ${MAX_MARKDOWN_LINE_LENGTH}.`
@@ -171,7 +286,11 @@ function validateMarkdownQuality(markdown) {
         }
 
         const headingMatch = line.match(/^#{1,6}\s+(.+?)\s*#*\s*$/);
-        if (headingMatch && isPredominantlyUppercaseTitle(headingMatch[1], contextualAcronyms)) {
+        if (
+            headingMatch
+            && isPredominantlyUppercaseTitle(headingMatch[1], contextualAcronyms)
+            && !isSourceDerivedUppercaseTitle(headingMatch[1], options.sourceMarkdown)
+        ) {
             issues.push(
                 `linha ${lineNumber}: título predominantemente em maiúsculas; use capitalização editorial e preserve apenas siglas.`
             );
@@ -215,9 +334,9 @@ function validateMarkdownQuality(markdown) {
     return { valid: issues.length === 0, issues };
 }
 
-function validateGeneratedContent(markdown) {
+function validateGeneratedContent(markdown, options = {}) {
     const mermaid = validateMermaidBlocks(markdown);
-    const markdownQuality = validateMarkdownQuality(markdown);
+    const markdownQuality = validateMarkdownQuality(markdown, options);
     const issues = [...mermaid.issues, ...markdownQuality.issues];
 
     return {
@@ -228,8 +347,8 @@ function validateGeneratedContent(markdown) {
     };
 }
 
-function assertValidGeneratedContent(markdown) {
-    const result = validateGeneratedContent(markdown);
+function assertValidGeneratedContent(markdown, options = {}) {
+    const result = validateGeneratedContent(markdown, options);
     if (!result.valid) {
         throw new Error(`Conteúdo gerado inválido: ${result.issues.join(' ')}`);
     }
@@ -245,5 +364,7 @@ module.exports = {
     validateMarkdownQuality,
     validateGeneratedContent,
     assertValidGeneratedContent,
+    validateSourceHeadingCoverage,
+    assertSourceHeadingCoverage,
     isPredominantlyUppercaseTitle,
 };

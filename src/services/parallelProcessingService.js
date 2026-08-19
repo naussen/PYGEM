@@ -6,7 +6,11 @@ const path = require('path');
 const geminiService = require('./geminiService');
 const { estimateTokens } = require('./tokenService');
 const { prepareContentForRewrite, finalizeRewrittenContent } = require('../utils/contentPreprocessor');
-const { assertValidGeneratedContent } = require('../utils/validation');
+const { normalizeUppercaseHeadings } = require('../utils/contentProcessor');
+const {
+    assertValidGeneratedContent,
+    assertSourceHeadingCoverage,
+} = require('../utils/validation');
 const logger = require('../utils/logger');
 
 class ParallelProcessingService {
@@ -126,21 +130,32 @@ class ParallelProcessingService {
                 throw new Error('Arquivo vazio');
             }
 
-            const prepared = prepareContentForRewrite(rawContent);
+            const prepared = prepareContentForRewrite(rawContent, fileName);
             const content = prepared.text;
             const estimatedTokens = estimateTokens(content);
             
             let rewrittenContent;
-            if (estimatedTokens > 5000) {
+            if (geminiService.shouldRewriteInBlocks(estimatedTokens)) {
                 rewrittenContent = await geminiService.rewriteContentInBlocks(content, prompt, fileName);
             } else {
                 rewrittenContent = await geminiService.rewriteContent(content, prompt);
             }
 
             rewrittenContent = finalizeRewrittenContent(rewrittenContent, prepared);
+            rewrittenContent = normalizeUppercaseHeadings(rewrittenContent);
+            assertValidGeneratedContent(rewrittenContent, {
+                sourceMarkdown: content,
+            });
+            assertSourceHeadingCoverage(content, rewrittenContent);
 
-            // Salva o arquivo processado
-            await this.saveProcessedFile(file, rewrittenContent, options);
+            // O chamador pode adiar a escrita para publicar cada resultado
+            // individualmente e de forma atômica após a validação.
+            if (!options.deferWrite) {
+                await this.saveProcessedFile(file, rewrittenContent, {
+                    ...options,
+                    sourceMarkdown: content,
+                });
+            }
 
             const processingTime = Date.now() - startTime;
 
@@ -161,7 +176,9 @@ class ParallelProcessingService {
      */
     async saveProcessedFile(file, content, options) {
         const { replaceOriginal = false, deleteOriginal = false, outputDir = null } = options;
-        assertValidGeneratedContent(content);
+        assertValidGeneratedContent(content, {
+            sourceMarkdown: options.sourceMarkdown,
+        });
         
         if (replaceOriginal) {
             // Substitui o arquivo original

@@ -3,6 +3,48 @@
 
 const fs = require('fs');
 const path = require('path');
+const { isPredominantlyUppercaseTitle } = require('./validation');
+
+const EDITORIAL_TITLE_ACRONYMS = new Set([
+    'AFO', 'CIDE', 'CLT', 'CPC', 'CPP', 'CTN', 'CVM', 'DRE', 'FRF',
+    'ICMS', 'ISS', 'LDO', 'LINDB', 'LOA', 'LRF', 'NBC', 'PPA', 'RT',
+    'STF', 'STJ', 'TA', 'TCE', 'TCU', 'TI', 'DC', 'DCs',
+]);
+
+function normalizeEditorialHeadingTitle(title) {
+    const words = String(title || '').split(/(\s+)/);
+    let firstWord = true;
+    return words.map((word) => {
+        if (/^\s+$/.test(word) || !word) return word;
+
+        const match = word.match(/^(\W*)([\p{L}\p{N}]+)(\W*)$/u);
+        if (!match) return word;
+
+        const [, prefix, core, suffix] = match;
+        const upperCore = core.toLocaleUpperCase('pt-BR');
+        let normalizedCore;
+        if (EDITORIAL_TITLE_ACRONYMS.has(upperCore) || /\d/.test(core)) {
+            normalizedCore = upperCore;
+        } else {
+            const lowerCore = core.toLocaleLowerCase('pt-BR');
+            normalizedCore = `${lowerCore.charAt(0).toLocaleUpperCase('pt-BR')}${lowerCore.slice(1)}`;
+        }
+
+        if (!firstWord && /^(a|as|o|os|e|de|da|das|do|dos|em|na|nas|no|nos|para|por)$/i.test(core)) {
+            normalizedCore = core.toLocaleLowerCase('pt-BR');
+        }
+        firstWord = false;
+        return `${prefix}${normalizedCore}${suffix}`;
+    }).join('');
+}
+
+function normalizeUppercaseHeadings(content) {
+    return String(content || '').split('\n').map((line) => {
+        const match = line.match(/^(\s*#{1,6}\s+)(.+?)(\s*#*\s*)$/);
+        if (!match || !isPredominantlyUppercaseTitle(match[2])) return line;
+        return `${match[1]}${normalizeEditorialHeadingTitle(match[2])}${match[3]}`;
+    }).join('\n');
+}
 
 /**
  * Gera índice do conteúdo baseado nos títulos ## e subtítulos ###
@@ -242,6 +284,7 @@ function applyContentEnhancements(content, options = {}, filePath = null) {
 
 module.exports = {
     generateContentIndex,
+    normalizeUppercaseHeadings,
     removeModuleNumbers,
     removeExistingIndex,
     generateIndexFile,
