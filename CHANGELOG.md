@@ -6,6 +6,7 @@
 - registra hashes, modelo, seed e diretórios sem chamar Vertex AI nem importar resultados;
 - exige diretório de saída novo e preserva fontes originais.
 - adiciona CLI de preflight com parâmetros explícitos para fonte, plano e saída.
+- executa os pilotos reais 010, 022 e 023 em diretório novo, com auditoria visual aprovada e sem importação.
 
 ## 2026-08-19 — fixtures visuais
 
