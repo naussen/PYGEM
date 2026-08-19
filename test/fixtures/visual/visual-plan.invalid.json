@@ -1,0 +1,19 @@
+{
+  "schema_version": 1,
+  "discipline": "Auditoria",
+  "guide_id": "auditoria-visual-v1",
+  "guide_sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+  "diversification_seed": "auditoria-v1",
+  "topics": [
+    {
+      "canonical_title": "Tópico A",
+      "topic_slug": "topico-repetido",
+      "requirements": []
+    },
+    {
+      "canonical_title": "Tópico B",
+      "topic_slug": "topico-repetido",
+      "requirements": []
+    }
+  ]
+}

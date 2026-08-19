@@ -1,0 +1,24 @@
+{
+  "schema_version": 1,
+  "discipline": "Auditoria",
+  "guide_id": "auditoria-visual-v1",
+  "guide_sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+  "diversification_seed": "auditoria-v1",
+  "topics": [
+    {
+      "source_index": "010",
+      "guide_section_index": 10,
+      "canonical_title": "Planejamento da auditoria (NBC TA 300)",
+      "topic_slug": "planejamento-da-auditoria-nbc-ta-300",
+      "requirements": [
+        {
+          "resource": "mermaid",
+          "semantic_role": "process_flow",
+          "required": true,
+          "minimum": 1,
+          "maximum": 1
+        }
+      ]
+    }
+  ]
+}

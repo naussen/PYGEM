@@ -79,6 +79,36 @@ Os arquivos originais são preservados, salvo quando uma opção explícita de s
 
 Quando a primeira linha útil usa o marcador de título `@@ Título` ou `@@@ Título`, o PYGEM preserva essa linha literalmente na saída. A regra vale somente para o título do material; subtítulos e seções Markdown continuam sujeitos à reescrita e à normalização editorial. Além da instrução enviada ao modelo, o título original é restaurado deterministicamente antes da validação e da gravação.
 
+## Plano visual v1
+
+O PYGEM possui o contrato inicial para converter um relatório visual descritivo em um plano JSON validado. Essa compilação é offline, determinística e não chama o Vertex AI:
+
+```powershell
+npm.cmd run visual:compile -- C:\caminho\auditoria.visual.md --discipline "Auditoria"
+```
+
+Por padrão, `auditoria.visual.md` gera `auditoria.visual-plan.json` no mesmo diretório. Também é possível definir identificador, semente e saída:
+
+```powershell
+npm.cmd run visual:compile -- C:\caminho\auditoria.visual.md `
+  --discipline "Auditoria" `
+  --guide-id auditoria-visual-v1 `
+  --seed auditoria-v1 `
+  --output C:\saida\auditoria.visual-plan.json
+```
+
+Convenções desta versão:
+
+- tópicos do relatório usam cabeçalhos `###`;
+- o compilador ignora seções de sumário/índice;
+- a parte `Correção recomendada para Markdown` prevalece sobre a descrição do layout original;
+- um índice de arquivo só é associado quando declarado como `[arquivo: 010]` ou por nome explícito como `010_arquivo.md`;
+- o plano nunca infere silenciosamente que o número da seção do relatório corresponde ao número do arquivo;
+- hashes SHA-256 vinculam o plano ao relatório literal;
+- um manifesto de arquivo aceita vários tópicos visuais agrupados.
+
+Os schemas ficam em `src/visual/schemas`. Nesta etapa o plano ainda não é injetado automaticamente na reescrita principal; essa integração pertence à próxima fase do fluxo.
+
 ## Variáveis de ambiente
 
 | Variável | Descrição | Padrão |
@@ -144,6 +174,7 @@ Execute as verificações locais com:
 ```powershell
 npm.cmd run test:mermaid
 npm.cmd run test:core
+npm.cmd run test:visual
 ```
 
 ## Estrutura

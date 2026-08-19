@@ -85,6 +85,8 @@ Para cada arquivo:
 010_Auditoria_reescrito.visual-manifest.json
 ```
 
+O manifesto do arquivo contém `topics[]`, pois um único Markdown pode agrupar mais de uma unidade do relatório visual, como Independência e suas regras de rotação.
+
 Para o lote:
 
 ```text
@@ -195,11 +197,15 @@ Campos mínimos:
   "source_sha256": "...",
   "output_sha256": "...",
   "visual_plan_sha256": "...",
-  "topic_slug": "relatorio-de-auditoria-nbc-ta-700-701-705-e-706",
-  "selected_variants": [],
-  "requirements": [],
-  "observed_resources": [],
-  "violations": []
+  "topics": [
+    {
+      "topic_slug": "relatorio-de-auditoria-nbc-ta-700-701-705-e-706",
+      "selected_variants": [],
+      "requirements": [],
+      "observed_resources": [],
+      "violations": []
+    }
+  ]
 }
 ```
 
