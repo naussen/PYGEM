@@ -4,7 +4,8 @@
 
 - Pacote 1 concluído: schemas, convenções, compilador offline, fixtures e testes.
 - Pacote 2 concluído: suporte ao relatório/plano visual no processamento principal do PYGEM.
-- Pacotes 3 a 10 pendentes, começando pelas variantes determinísticas de tabela, fluxo e realce.
+- Pacote 3 concluído: variantes determinísticas e semanticamente compatíveis para tabela, Mermaid e realce.
+- Pacotes 4 a 10 pendentes, começando pela validação dos recursos obrigatórios no PYGEM.
 
 ## 1. Objetivo
 

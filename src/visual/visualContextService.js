@@ -6,6 +6,7 @@ const {
     sha256,
 } = require('./visualGuideCompiler');
 const { validateVisualPlan } = require('./visualPlanValidator');
+const { applyVisualVariants } = require('./visualVariants');
 
 const VISUAL_OPTION_NAMES = new Set([
     'visual-guide',
@@ -109,21 +110,22 @@ function loadVisualContext(options) {
                 `Plano visual não contém JSON válido: ${error.message}`
             );
         }
-        validateVisualPlan(plan);
+        const selectedPlan = applyVisualVariants(plan);
         return {
             inputType: 'plan',
             inputPath: loaded.resolvedPath,
-            plan,
-            planHash: sha256(JSON.stringify(plan)),
+            plan: selectedPlan,
+            planHash: sha256(JSON.stringify(selectedPlan)),
         };
     }
 
     const loaded = readBoundedFile(options.visualGuidePath, 'Relatório visual');
-    const plan = compileVisualGuide(loaded.content, {
+    const compiledPlan = compileVisualGuide(loaded.content, {
         discipline: options.discipline,
         guideId: options.guideId,
         diversificationSeed: options.diversificationSeed,
     });
+    const plan = applyVisualVariants(compiledPlan);
     return {
         inputType: 'guide',
         inputPath: loaded.resolvedPath,

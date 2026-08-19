@@ -1,6 +1,7 @@
 const fs = require('fs');
 const path = require('path');
 const { MAX_VISUAL_GUIDE_BYTES, compileVisualGuide } = require('./visualGuideCompiler');
+const { applyVisualVariants } = require('./visualVariants');
 
 function parseArgs(argv) {
     const result = {
@@ -75,11 +76,12 @@ function main(argv = process.argv.slice(2)) {
     }
 
     const markdown = fs.readFileSync(inputPath, 'utf8');
-    const plan = compileVisualGuide(markdown, {
+    const compiledPlan = compileVisualGuide(markdown, {
         discipline: args.discipline,
         guideId: args.guideId,
         diversificationSeed: args.diversificationSeed,
     });
+    const plan = applyVisualVariants(compiledPlan);
     const outputPath = path.resolve(args.outputPath || getDefaultOutputPath(inputPath));
     writeJsonAtomic(outputPath, plan);
     console.log(`Plano visual validado e salvo: ${outputPath}`);

@@ -39,6 +39,12 @@ const {
     getReusableManifestEntries,
 } = require('./src/services/fileServiceMd');
 const { createRewriteCheckpoint } = require('./src/services/rewriteCheckpointService');
+const {
+    getCompatibleVariants,
+    getStableVariantIndex,
+    selectVariantFamily,
+    applyVisualVariants,
+} = require('./src/visual/visualVariants');
 
 const fixtures = path.join(__dirname, 'test', 'fixtures', 'visual');
 const guide = fs.readFileSync(path.join(fixtures, 'guide.visual.md'), 'utf8');
@@ -94,6 +100,68 @@ assert.deepStrictEqual(
     compiledPlan.topics[2].requirements.map(item => item.resource).sort(),
     ['highlight', 'mnemonic', 'table'],
     'Recomendação deve prevalecer e não copiar o diagrama descrito apenas como original'
+);
+
+const selectedPlan = applyVisualVariants(compiledPlan);
+const repeatedSelection = applyVisualVariants(compiledPlan);
+assert.deepStrictEqual(
+    repeatedSelection,
+    selectedPlan,
+    'A mesma semente e o mesmo plano devem produzir variantes idênticas'
+);
+selectedPlan.topics.forEach(topic => {
+    topic.requirements.forEach(requirement => {
+        assert(
+            getCompatibleVariants(requirement.resource, requirement.semantic_role)
+                .includes(requirement.variant_family),
+            `Variante ${requirement.variant_family} deve ser compatível com ${requirement.semantic_role}`
+        );
+    });
+});
+assert.strictEqual(
+    getStableVariantIndex('seed', 'topico', 'table', 'comparison', 3),
+    getStableVariantIndex('seed', 'topico', 'table', 'comparison', 3),
+    'Índice derivado por SHA-256 deve ser estável'
+);
+const comparisonVariantsAcrossSeeds = new Set(
+    Array.from({ length: 24 }, (_, index) => selectVariantFamily({
+        seed: `seed-${index}`,
+        topicSlug: 'comparacao',
+        requirement: {
+            resource: 'table',
+            semantic_role: 'comparison',
+        },
+    }))
+);
+assert(
+    comparisonVariantsAcrossSeeds.size > 1,
+    'Sementes distintas devem poder selecionar composições de tabela distintas'
+);
+assert.strictEqual(
+    selectVariantFamily({
+        seed: 'qualquer',
+        topicSlug: 'regra',
+        requirement: {
+            resource: 'highlight',
+            semantic_role: 'rule',
+            variant_family: 'keyword-rule',
+        },
+    }),
+    'keyword-rule',
+    'Variante explícita semanticamente válida deve ser preservada'
+);
+assert.throws(
+    () => selectVariantFamily({
+        seed: 'qualquer',
+        topicSlug: 'decisao',
+        requirement: {
+            resource: 'mermaid',
+            semantic_role: 'decision_flow',
+            variant_family: 'linear-stages',
+        },
+    }),
+    error => error.code === 'PYGEM_VISUAL_VARIANT_ROLE_MISMATCH',
+    'Variante incompatível com o papel semântico deve falhar antes da geração'
 );
 
 assert.strictEqual(validateVisualPlan(validPlanFixture), validPlanFixture);
@@ -251,6 +319,10 @@ assert.match(
     /não substitua tabela por Mermaid/u,
     'Prompt deve proibir troca do tipo de ferramenta'
 );
+const selectedVisualPrompt = getVisualRequirementsPrompt([selectedPlan.topics[0]]);
+assert.match(selectedVisualPrompt, /variante=/u);
+assert.match(selectedVisualPrompt, /estrutura:/u);
+assert.match(selectedVisualPrompt, /Não copie redação, cores, geometria/u);
 
 const completeManifest = createVisualManifest({
     sourceFile: 'C:\\fontes\\010_Auditoria.md',
@@ -320,6 +392,11 @@ try {
         validateVisualPlan(JSON.parse(fs.readFileSync(cliOutputPath, 'utf8'))).topics.length,
         3,
         'CLI deve publicar somente um plano integral e validado'
+    );
+    assert(
+        JSON.parse(fs.readFileSync(cliOutputPath, 'utf8')).topics
+            .every(topic => topic.requirements.every(requirement => requirement.variant_family)),
+        'CLI deve persistir todas as variantes determinísticas selecionadas'
     );
     const loadedPlan = loadVisualContext({
         visualGuidePath: null,

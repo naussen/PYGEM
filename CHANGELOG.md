@@ -13,3 +13,7 @@
 - envia ao modelo somente os requisitos visuais pertinentes ao arquivo atual;
 - invalida checkpoints e reaproveitamentos quando o contrato visual muda;
 - persiste o plano normalizado como `_visual-plan.json` no diretório de saída.
+- seleciona variantes visuais por SHA-256 da semente, tópico, recurso e papel semântico;
+- impede variantes incompatíveis com a função didática antes da geração;
+- orienta estruturas distintas para tabelas, Mermaid e realces sem copiar a identidade da referência;
+- inclui variantes determinísticas nos planos produzidos pelo compilador de linha de comando.

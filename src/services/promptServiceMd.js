@@ -1,3 +1,5 @@
+const { getVariantInstruction } = require('../visual/visualVariants');
+
 function sanitizeVisualLabel(value) {
     return String(value || '')
         .replace(/[\u0000-\u001F\u007F]/g, ' ')
@@ -18,9 +20,12 @@ function getVisualRequirementsPrompt(visualTopics = []) {
                 const target = requirement.target_section
                     ? `; seção-alvo: ${sanitizeVisualLabel(requirement.target_section)}`
                     : '';
+                const variant = sanitizeVisualLabel(requirement.variant_family);
+                const structuralInstruction = getVariantInstruction(requirement.variant_family);
                 return `  - recurso=${requirement.resource}; função=${requirement.semantic_role}; `
                     + `quantidade=${requirement.minimum}..${requirement.maximum}; `
-                    + `obrigatório=${requirement.required ? 'sim' : 'não'}${target}`;
+                    + `obrigatório=${requirement.required ? 'sim' : 'não'}; variante=${variant}${target}`
+                    + (structuralInstruction ? `\n    estrutura: ${structuralInstruction}` : '');
             })
             : ['  - nenhum recurso visual obrigatório entre tabela, Mermaid, realce e mnemônico'];
         return [`- tópico=${topic.topic_slug}; título=${title}`, ...requirementLines];

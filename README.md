@@ -106,6 +106,10 @@ Convenções desta versão:
 - o plano nunca infere silenciosamente que o número da seção do relatório corresponde ao número do arquivo;
 - hashes SHA-256 vinculam o plano ao relatório literal;
 - um manifesto de arquivo aceita vários tópicos visuais agrupados.
+- a semente, o tópico, o recurso e o papel semântico selecionam deterministicamente uma variante estrutural compatível;
+- tabelas alternam a organização por critérios, entidades, comparação dividida ou regra/consequência;
+- Mermaid preserva a semântica de processo, decisão, hierarquia ou linha do tempo;
+- realces alternam aviso anterior, síntese posterior, regra por palavra-chave ou bloco de exceção.
 
 Os schemas ficam em `src/visual/schemas`. O processamento principal aceita diretamente o relatório visual ou um plano previamente compilado:
 
@@ -115,6 +119,8 @@ npm.cmd start -- --visual-plan C:\caminho\auditoria.visual-plan.json
 ```
 
 O PYGEM associa somente os tópicos pertinentes a cada arquivo por `source_index` explícito ou por título, inclusive quando o título de origem está fragmentado por OCR. Um plano ativo sem correspondência interrompe o arquivo antes da chamada ao modelo. Apenas os requisitos selecionados entram no prompt; o plano normalizado também é gravado como `_visual-plan.json` na saída. O hash do plano e os tópicos associados invalidam checkpoints e reaproveitamentos incompatíveis.
+
+A mesma `diversification_seed` sempre produz as mesmas variantes. Alterar a semente permite outra composição compatível sem trocar o tipo da ferramenta nem modificar causalidade, ordem normativa ou condição lógica. Variantes explícitas no plano são preservadas somente quando compatíveis com o recurso e seu papel semântico.
 
 As opções de linha de comando prevalecem sobre as variáveis de ambiente. `--visual-guide` e `--visual-plan` são mutuamente exclusivos; o guia Markdown exige `--visual-discipline`. Opcionalmente, use `--visual-guide-id` e `--visual-seed`.
 
