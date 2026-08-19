@@ -7,7 +7,8 @@
 - Pacote 3 concluído: variantes determinísticas e semanticamente compatíveis para tabela, Mermaid e realce.
 - Pacote 4 concluído: detecção e validação de recursos visuais antes da publicação no PYGEM.
 - Pacote 5 concluído no LEIAUT: leitura do plano/manifesto, instrução restrita e relatório de validação.
-- Pacotes 6 a 10 pendentes, começando pelo bloqueio anterior à publicação.
+- Pacote 6 concluído no LEIAUT: divergência obrigatória bloqueia a publicação e a gravação é atômica.
+- Pacotes 7 a 10 pendentes, começando pela correção da autoridade de `topic_id`.
 
 ## 1. Objetivo
 
