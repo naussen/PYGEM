@@ -1,5 +1,11 @@
 # Plano de implementação — manifesto visual PYGEM → LEIAUT
 
+## Status em 2026-08-19
+
+- Pacote 1 concluído: schemas, convenções, compilador offline, fixtures e testes.
+- Pacote 2 concluído: suporte ao relatório/plano visual no processamento principal do PYGEM.
+- Pacotes 3 a 10 pendentes, começando pelas variantes determinísticas de tabela, fluxo e realce.
+
 ## 1. Objetivo
 
 Implementar um fluxo no qual o usuário forneça, para cada disciplina:

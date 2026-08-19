@@ -845,7 +845,7 @@ async function rewriteBlockWithRecovery(block, prompt, label, options = {}) {
 }
 
 const geminiService = {
-    async rewriteContent(content, prompt) {
+    async rewriteContent(content, prompt, options = {}) {
         try {
             if (!config.hasValidVertexConfig()) {
                 throw new Error('Configuração do Vertex AI incompleta. Verifique o arquivo .env.');
@@ -873,7 +873,7 @@ const geminiService = {
         }
     },
 
-    async rewriteContentInBlocks(content, prompt, fileName) {
+    async rewriteContentInBlocks(content, prompt, fileName, options = {}) {
         try {
             if (!config.hasValidVertexConfig()) {
                 throw new Error('Configuração do Vertex AI incompleta. Verifique o arquivo .env.');
@@ -906,6 +906,10 @@ const geminiService = {
                         maxOutputRatio: config.outputPolicy.maxOutputRatio,
                         outputMultiplier: config.outputPolicy.maxOutputTokenMultiplier,
                         maxOutputTokensPerRequest: config.outputPolicy.maxOutputTokensPerRequest,
+                        visualPlanHash: options.visualPlanHash || null,
+                        visualTopicSlugs: Array.isArray(options.visualTopicSlugs)
+                            ? [...options.visualTopicSlugs].sort()
+                            : [],
                     },
                 })
                 : null;

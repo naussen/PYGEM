@@ -25,6 +25,13 @@ const { prepareContentForRewrite, finalizeRewrittenContent } = require('./utils/
 const logger = require('./utils/logger');
 const powerService = require('./services/powerService');
 const PerformanceLogger = require('./services/performanceLogger');
+const { sha256 } = require('./visual/visualGuideCompiler');
+const {
+    parseVisualOptions,
+    loadVisualContext,
+    selectVisualTopicsForFile,
+    writeVisualPlanAtomic,
+} = require('./visual/visualContextService');
 
 // Permite escolher entre configuração normal ou otimizada
 const useOptimizedConfig = process.env.USE_OPTIMIZED_CONFIG === 'true' || process.argv.includes('--optimized');
@@ -41,6 +48,19 @@ async function main() {
             console.log('⚡ Usando configuração otimizada para melhor performance!');
         }
         logger.info('Iniciando Vertex AI Markdown Rewriter...');
+
+        const visualOptions = parseVisualOptions(process.argv.slice(2), process.env);
+        const visualContext = loadVisualContext(visualOptions);
+        if (visualContext) {
+            console.log(
+                `🎨 Plano visual v1 carregado: ${visualContext.plan.topics.length} tópico(s), `
+                + `origem ${path.basename(visualContext.inputPath)}`
+            );
+            logger.info(
+                `Plano visual carregado (${visualContext.inputType}, `
+                + `${visualContext.plan.topics.length} tópicos, hash ${visualContext.planHash.slice(0, 12)}).`
+            );
+        }
         
         // Inicializa o performance logger
         performanceLogger = new PerformanceLogger();
@@ -182,9 +202,19 @@ async function main() {
 
         // Cria o diretório de saída
         createOutputDirectory(outputDirectory);
+        if (visualContext) {
+            const persistedVisualPlan = writeVisualPlanAtomic(outputDirectory, visualContext.plan);
+            console.log(`🎨 Plano visual normalizado salvo: ${persistedVisualPlan}`);
+        }
 
         // Obtém o prompt de reescrita
         const prompt = getRewritingPrompt();
+        const generationFingerprint = sha256(JSON.stringify({
+            schemaVersion: 1,
+            model: config.model,
+            basePromptHash: sha256(prompt),
+            visualPlanHash: visualContext?.planHash || null,
+        }));
 
         let successCount = 0;
         let errorCount = 0;
@@ -200,7 +230,8 @@ async function main() {
                 outputDirectory,
                 inputDirectory,
                 dirPath,
-                mdFiles
+                mdFiles,
+                { generationFingerprint }
             );
             const reusablePaths = new Set(
                 reusableEntries.map(entry => path.resolve(entry.filePath))
@@ -225,12 +256,32 @@ async function main() {
                 try {
                     const content = fs.readFileSync(file, 'utf-8');
                     const tokens = estimateTokens(content);
+                    if (!content.trim()) {
+                        return {
+                            path: file,
+                            name: path.basename(file),
+                            content,
+                            tokens,
+                            visualTopics: [],
+                            visualPlanHash: visualContext?.planHash || null,
+                            prompt,
+                            readError: 'Arquivo vazio',
+                        };
+                    }
+                    const visualTopics = visualContext
+                        ? selectVisualTopicsForFile(file, content, visualContext.plan)
+                        : [];
                     return {
                         path: file,
                         name: path.basename(file),
                         content,
                         tokens,
-                        readError: content.trim() ? null : 'Arquivo vazio',
+                        visualTopics,
+                        visualPlanHash: visualContext?.planHash || null,
+                        prompt: visualTopics.length > 0
+                            ? getRewritingPrompt({ visualTopics })
+                            : prompt,
+                        readError: null,
                     };
                 } catch (error) {
                     return {
@@ -352,6 +403,12 @@ async function main() {
                     const content = prepared.text;
                     const estimatedTokens = estimateTokens(content);
                     console.log(`    📊 Arquivo contém aproximadamente ${estimatedTokens} tokens (${prepared.imageFooter ? 'imagens base64 separadas' : 'sem imagens base64'})`);
+                    if (fileData.visualTopics.length > 0) {
+                        console.log(
+                            `    🎨 Contrato visual aplicado: ${fileData.visualTopics.length} tópico(s), `
+                            + `${fileData.visualTopics.reduce((total, topic) => total + topic.requirements.length, 0)} requisito(s)`
+                        );
+                    }
                     
                     // Inicia o logging de performance para este arquivo
                     if (performanceLogger) {
@@ -362,10 +419,25 @@ async function main() {
                     let rewrittenContent;
                     if (geminiService.shouldRewriteInBlocks(estimatedTokens)) {
                         console.log(`    📦 Arquivo será processado em blocos (limite seguro: ${config.processing.singlePassMaxInputTokens} tokens)`);
-                        rewrittenContent = await geminiService.rewriteContentInBlocks(content, prompt, fileName);
+                        rewrittenContent = await geminiService.rewriteContentInBlocks(
+                            content,
+                            fileData.prompt,
+                            fileName,
+                            {
+                                visualPlanHash: fileData.visualPlanHash,
+                                visualTopicSlugs: fileData.visualTopics.map(topic => topic.topic_slug),
+                            }
+                        );
                     } else {
                         console.log(`    📄 Arquivo será processado de uma vez (até ${config.processing.singlePassMaxInputTokens} tokens)`);
-                        rewrittenContent = await geminiService.rewriteContent(content, prompt);
+                        rewrittenContent = await geminiService.rewriteContent(
+                            content,
+                            fileData.prompt,
+                            {
+                                visualPlanHash: fileData.visualPlanHash,
+                                visualTopicSlugs: fileData.visualTopics.map(topic => topic.topic_slug),
+                            }
+                        );
                     }
 
                     // APLICAR NOVOS RECURSOS
@@ -458,7 +530,8 @@ async function main() {
                 dirPath,
                 mdFiles,
                 dirSuccessfulEntries,
-                dirFailedEntries
+                dirFailedEntries,
+                { generationFingerprint }
             );
             directoryResults.push({
                 directory: dirPath,

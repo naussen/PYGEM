@@ -107,7 +107,16 @@ Convenções desta versão:
 - hashes SHA-256 vinculam o plano ao relatório literal;
 - um manifesto de arquivo aceita vários tópicos visuais agrupados.
 
-Os schemas ficam em `src/visual/schemas`. Nesta etapa o plano ainda não é injetado automaticamente na reescrita principal; essa integração pertence à próxima fase do fluxo.
+Os schemas ficam em `src/visual/schemas`. O processamento principal aceita diretamente o relatório visual ou um plano previamente compilado:
+
+```powershell
+npm.cmd start -- --visual-guide C:\caminho\auditoria.visual.md --visual-discipline "Auditoria"
+npm.cmd start -- --visual-plan C:\caminho\auditoria.visual-plan.json
+```
+
+O PYGEM associa somente os tópicos pertinentes a cada arquivo por `source_index` explícito ou por título, inclusive quando o título de origem está fragmentado por OCR. Um plano ativo sem correspondência interrompe o arquivo antes da chamada ao modelo. Apenas os requisitos selecionados entram no prompt; o plano normalizado também é gravado como `_visual-plan.json` na saída. O hash do plano e os tópicos associados invalidam checkpoints e reaproveitamentos incompatíveis.
+
+As opções de linha de comando prevalecem sobre as variáveis de ambiente. `--visual-guide` e `--visual-plan` são mutuamente exclusivos; o guia Markdown exige `--visual-discipline`. Opcionalmente, use `--visual-guide-id` e `--visual-seed`.
 
 ## Variáveis de ambiente
 
@@ -148,6 +157,11 @@ Os schemas ficam em `src/visual/schemas`. Nesta etapa o plano ainda não é inje
 | `PYGEM_MAX_BLOCK_SUBDIVISION_DEPTH` | Níveis máximos de subdivisão para recuperação | `3` |
 | `PYGEM_CHECKPOINT_ENABLED` | Persiste blocos válidos de arquivos grandes para retomada (`false` desabilita) | `true` |
 | `PYGEM_MAX_CONCURRENT_REQUESTS` | Chamadas simultâneas no modo otimizado; aumente somente com cota comprovada | `1` |
+| `PYGEM_VISUAL_GUIDE` | Relatório visual Markdown opcional, mutuamente exclusivo com `PYGEM_VISUAL_PLAN` | ausente |
+| `PYGEM_VISUAL_PLAN` | Plano visual JSON validado opcional, mutuamente exclusivo com `PYGEM_VISUAL_GUIDE` | ausente |
+| `PYGEM_VISUAL_DISCIPLINE` | Disciplina obrigatória ao compilar `PYGEM_VISUAL_GUIDE` | ausente |
+| `PYGEM_VISUAL_GUIDE_ID` | Identificador opcional do guia compilado | derivado do arquivo |
+| `PYGEM_VISUAL_SEED` | Semente opcional de diversificação futura | derivada do identificador |
 
 ## Saídas individuais e execuções incompletas
 

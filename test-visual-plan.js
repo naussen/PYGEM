@@ -24,6 +24,21 @@ const {
     getDefaultOutputPath,
     main: compileGuideCli,
 } = require('./src/visual/compileVisualGuideCli');
+const {
+    parseVisualOptions,
+    loadVisualContext,
+    selectVisualTopicsForFile,
+    writeVisualPlanAtomic,
+} = require('./src/visual/visualContextService');
+const {
+    getRewritingPrompt,
+    getVisualRequirementsPrompt,
+} = require('./src/services/promptServiceMd');
+const {
+    writeDirectoryProcessingManifest,
+    getReusableManifestEntries,
+} = require('./src/services/fileServiceMd');
+const { createRewriteCheckpoint } = require('./src/services/rewriteCheckpointService');
 
 const fixtures = path.join(__dirname, 'test', 'fixtures', 'visual');
 const guide = fs.readFileSync(path.join(fixtures, 'guide.visual.md'), 'utf8');
@@ -153,6 +168,90 @@ assert.strictEqual(
     'Nome padrão não deve duplicar o sufixo visual'
 );
 
+assert.deepStrictEqual(
+    parseVisualOptions([], {}),
+    {
+        visualGuidePath: null,
+        visualPlanPath: null,
+        discipline: null,
+        guideId: null,
+        diversificationSeed: null,
+    },
+    'Fluxo sem guia deve permanecer compatível'
+);
+assert.strictEqual(
+    parseVisualOptions(
+        ['--visual-plan', 'cli.json'],
+        { PYGEM_VISUAL_PLAN: 'env.json' }
+    ).visualPlanPath,
+    'cli.json',
+    'Opção de CLI deve prevalecer sobre variável de ambiente'
+);
+assert.throws(
+    () => parseVisualOptions(
+        ['--visual-guide', 'guia.md', '--visual-plan', 'plano.json', '--visual-discipline', 'Auditoria'],
+        {}
+    ),
+    error => error.code === 'PYGEM_VISUAL_INPUT_CONFLICT',
+    'Guia e plano não podem ser usados simultaneamente'
+);
+assert.throws(
+    () => parseVisualOptions(['--visual-guide', 'guia.md'], {}),
+    error => error.code === 'PYGEM_VISUAL_DISCIPLINE_REQUIRED',
+    'Compilação integrada do guia exige disciplina explícita'
+);
+
+const groupedPlan = {
+    schema_version: 1,
+    discipline: 'Auditoria',
+    guide_id: 'auditoria-visual-v1',
+    guide_sha256: '0'.repeat(64),
+    diversification_seed: 'auditoria-v1',
+    topics: [
+        {
+            canonical_title: 'Independência',
+            topic_slug: 'independencia',
+            requirements: [],
+        },
+        {
+            canonical_title: 'Rotação dos responsáveis técnicos (RT)',
+            topic_slug: 'rotacao-dos-responsaveis-tecnicos-rt',
+            requirements: [],
+        },
+        {
+            canonical_title: 'Eventos subsequentes',
+            topic_slug: 'eventos-subsequentes',
+            requirements: [],
+        },
+    ],
+};
+const groupedTopics = selectVisualTopicsForFile(
+    '005_Auditoria.md',
+    '@@ IN DE PEN DÊN CIA\n\nRO TA ÇÃO DOS RE S PON SÁVEIS TÉC NICOS (RT)\nTexto.',
+    groupedPlan
+);
+assert.deepStrictEqual(
+    groupedTopics.map(topic => topic.topic_slug),
+    ['independencia', 'rotacao-dos-responsaveis-tecnicos-rt'],
+    'Seleção deve reconhecer títulos fragmentados e vários tópicos no mesmo arquivo'
+);
+assert.throws(
+    () => selectVisualTopicsForFile('999_Auditoria.md', '@@ Assunto sem plano', groupedPlan),
+    error => error.code === 'PYGEM_VISUAL_TOPIC_NOT_MATCHED',
+    'Arquivo sem correspondência não pode seguir silenciosamente com plano ativo'
+);
+
+const visualPrompt = getRewritingPrompt({ visualTopics: [compiledPlan.topics[0]] });
+assert.match(visualPrompt, /CONTRATO VISUAL DESTE ARQUIVO/u);
+assert.match(visualPrompt, new RegExp(compiledPlan.topics[0].topic_slug, 'u'));
+assert.doesNotMatch(visualPrompt, new RegExp(compiledPlan.topics[1].topic_slug, 'u'));
+assert.doesNotMatch(getRewritingPrompt(), /CONTRATO VISUAL DESTE ARQUIVO/u);
+assert.match(
+    getVisualRequirementsPrompt([compiledPlan.topics[0]]),
+    /não substitua tabela por Mermaid/u,
+    'Prompt deve proibir troca do tipo de ferramenta'
+);
+
 const completeManifest = createVisualManifest({
     sourceFile: 'C:\\fontes\\010_Auditoria.md',
     outputFile: 'C:\\saidas\\010_Auditoria_reescrito.md',
@@ -222,8 +321,94 @@ try {
         3,
         'CLI deve publicar somente um plano integral e validado'
     );
+    const loadedPlan = loadVisualContext({
+        visualGuidePath: null,
+        visualPlanPath: cliOutputPath,
+    });
+    assert.strictEqual(loadedPlan.inputType, 'plan');
+    assert.strictEqual(loadedPlan.plan.topics.length, 3);
+
+    const persistedDirectory = path.join(cliDirectory, 'saida');
+    const persistedPlanPath = writeVisualPlanAtomic(persistedDirectory, loadedPlan.plan);
+    assert.strictEqual(path.basename(persistedPlanPath), '_visual-plan.json');
+    assert.strictEqual(
+        validateVisualPlan(JSON.parse(fs.readFileSync(persistedPlanPath, 'utf8'))).topics.length,
+        3
+    );
 } finally {
     fs.rmSync(cliDirectory, { recursive: true, force: true });
+}
+
+const reuseDirectory = fs.mkdtempSync(path.join(os.tmpdir(), 'pygem-visual-reuse-'));
+try {
+    const inputDirectory = path.join(reuseDirectory, 'entrada');
+    const outputDirectory = path.join(reuseDirectory, 'saida');
+    fs.mkdirSync(inputDirectory, { recursive: true });
+    fs.mkdirSync(outputDirectory, { recursive: true });
+    const sourcePath = path.join(inputDirectory, '010_Auditoria.md');
+    const outputPath = path.join(outputDirectory, '010_Auditoria_reescrito.md');
+    fs.writeFileSync(sourcePath, '@@ Planejamento\nFonte.', 'utf8');
+    fs.writeFileSync(outputPath, '@@ Planejamento\nSaída.', 'utf8');
+    writeDirectoryProcessingManifest(
+        outputDirectory,
+        inputDirectory,
+        inputDirectory,
+        [sourcePath],
+        [{ filePath: sourcePath, outputFilePath: outputPath }],
+        [],
+        { generationFingerprint: 'contexto-a' }
+    );
+    assert.strictEqual(
+        getReusableManifestEntries(
+            outputDirectory,
+            inputDirectory,
+            inputDirectory,
+            [sourcePath],
+            { generationFingerprint: 'contexto-a' }
+        ).length,
+        1,
+        'Saída pode ser reutilizada com o mesmo contexto de geração'
+    );
+    assert.strictEqual(
+        getReusableManifestEntries(
+            outputDirectory,
+            inputDirectory,
+            inputDirectory,
+            [sourcePath],
+            { generationFingerprint: 'contexto-b' }
+        ).length,
+        0,
+        'Mudança do plano visual deve invalidar reutilização do arquivo publicado'
+    );
+
+    const checkpointDirectory = path.join(reuseDirectory, 'checkpoints');
+    const checkpointA = createRewriteCheckpoint({
+        content: 'Fonte',
+        prompt: 'Prompt',
+        fileName: '010.md',
+        blocks: ['Fonte'],
+        model: 'modelo',
+        blockInputTokens: 100,
+        generationSignature: { visualPlanHash: 'a' },
+        directory: checkpointDirectory,
+    });
+    const checkpointB = createRewriteCheckpoint({
+        content: 'Fonte',
+        prompt: 'Prompt',
+        fileName: '010.md',
+        blocks: ['Fonte'],
+        model: 'modelo',
+        blockInputTokens: 100,
+        generationSignature: { visualPlanHash: 'b' },
+        directory: checkpointDirectory,
+    });
+    assert.notStrictEqual(
+        checkpointA.filePath,
+        checkpointB.filePath,
+        'Mudança do hash visual deve invalidar checkpoint de blocos'
+    );
+} finally {
+    fs.rmSync(reuseDirectory, { recursive: true, force: true });
 }
 
 console.log('Testes do contrato e compilador de manifesto visual: OK');

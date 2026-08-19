@@ -121,6 +121,13 @@ class ParallelProcessingService {
     async processFileWithDedicatedKey(file, prompt, keyOffset = 0, options = {}) {
         const startTime = Date.now();
         const fileName = path.basename(file.path);
+        const filePrompt = file.prompt || prompt;
+        const rewriteOptions = {
+            visualPlanHash: file.visualPlanHash || null,
+            visualTopicSlugs: Array.isArray(file.visualTopics)
+                ? file.visualTopics.map(topic => topic.topic_slug)
+                : [],
+        };
         
         try {
             // Lê o conteúdo do arquivo
@@ -136,9 +143,14 @@ class ParallelProcessingService {
             
             let rewrittenContent;
             if (geminiService.shouldRewriteInBlocks(estimatedTokens)) {
-                rewrittenContent = await geminiService.rewriteContentInBlocks(content, prompt, fileName);
+                rewrittenContent = await geminiService.rewriteContentInBlocks(
+                    content,
+                    filePrompt,
+                    fileName,
+                    rewriteOptions
+                );
             } else {
-                rewrittenContent = await geminiService.rewriteContent(content, prompt);
+                rewrittenContent = await geminiService.rewriteContent(content, filePrompt, rewriteOptions);
             }
 
             rewrittenContent = finalizeRewrittenContent(rewrittenContent, prepared);

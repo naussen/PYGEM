@@ -109,6 +109,16 @@ function addMaximumLengthIssue(value, maximum, path, issues) {
     }
 }
 
+function addSingleLineTextIssue(value, path, issues) {
+    if (typeof value === 'string' && /[\u0000-\u001F\u007F]/.test(value)) {
+        issues.push({
+            code: 'CONTROL_CHARACTER_FORBIDDEN',
+            path,
+            message: `${path} não pode conter quebras de linha ou caracteres de controle`,
+        });
+    }
+}
+
 function validateRequirement(requirement, path, issues) {
     if (!isPlainObject(requirement)) {
         issues.push({
@@ -185,6 +195,7 @@ function validateRequirement(requirement, path, issues) {
         });
     }
     addMaximumLengthIssue(requirement.target_section, 300, `${path}.target_section`, issues);
+    addSingleLineTextIssue(requirement.target_section, `${path}.target_section`, issues);
     if (
         Object.hasOwn(requirement, 'variant_family')
         && !VARIANT_FAMILIES.has(requirement.variant_family)
@@ -239,6 +250,8 @@ function collectVisualPlanIssues(plan, options = {}) {
     addMaximumLengthIssue(plan.discipline, 120, '$.discipline', issues);
     addMaximumLengthIssue(plan.guide_id, 120, '$.guide_id', issues);
     addMaximumLengthIssue(plan.diversification_seed, 200, '$.diversification_seed', issues);
+    addSingleLineTextIssue(plan.discipline, '$.discipline', issues);
+    addSingleLineTextIssue(plan.diversification_seed, '$.diversification_seed', issues);
 
     if (typeof plan.guide_id === 'string' && !SLUG_PATTERN.test(plan.guide_id)) {
         issues.push({
@@ -298,6 +311,7 @@ function collectVisualPlanIssues(plan, options = {}) {
         addRequiredStringIssue(topic.topic_slug, `${path}.topic_slug`, issues);
         addMaximumLengthIssue(topic.canonical_title, 300, `${path}.canonical_title`, issues);
         addMaximumLengthIssue(topic.topic_slug, 300, `${path}.topic_slug`, issues);
+        addSingleLineTextIssue(topic.canonical_title, `${path}.canonical_title`, issues);
 
         if (typeof topic.topic_slug === 'string') {
             if (!SLUG_PATTERN.test(topic.topic_slug)) {

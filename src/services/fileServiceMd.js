@@ -233,7 +233,8 @@ const writeDirectoryProcessingManifest = (
     sourceDirectory,
     expectedFiles,
     successfulEntries,
-    failedEntries = []
+    failedEntries = [],
+    options = {}
 ) => {
     const relativeDirectory = getRelativePathInsideRoot(inputDirectory, sourceDirectory);
     const manifestDirectory = path.join(outputDirectory, relativeDirectory);
@@ -277,6 +278,7 @@ const writeDirectoryProcessingManifest = (
         status: failedFiles.length === 0 ? 'complete' : 'incomplete',
         generatedAt: new Date().toISOString(),
         sourceDirectory,
+        generationFingerprint: options.generationFingerprint || null,
         expectedFiles: expectedFiles.length,
         successfulFiles,
         failedFiles,
@@ -302,7 +304,8 @@ const getReusableManifestEntries = (
     outputDirectory,
     inputDirectory,
     sourceDirectory,
-    expectedFiles
+    expectedFiles,
+    options = {}
 ) => {
     const relativeDirectory = getRelativePathInsideRoot(inputDirectory, sourceDirectory);
     const manifestPath = path.join(outputDirectory, relativeDirectory, '_pygem.manifest.json');
@@ -311,6 +314,12 @@ const getReusableManifestEntries = (
     try {
         const manifest = JSON.parse(fs.readFileSync(manifestPath, 'utf8'));
         if (path.resolve(manifest.sourceDirectory || '') !== path.resolve(sourceDirectory)) {
+            return [];
+        }
+        if (
+            options.generationFingerprint
+            && manifest.generationFingerprint !== options.generationFingerprint
+        ) {
             return [];
         }
 
