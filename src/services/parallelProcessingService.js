@@ -6,6 +6,7 @@ const path = require('path');
 const geminiService = require('./geminiService');
 const { estimateTokens } = require('./tokenService');
 const { prepareContentForRewrite, finalizeRewrittenContent } = require('../utils/contentPreprocessor');
+const { assertVisualCompliance } = require('../visual/visualComplianceValidator');
 const { normalizeUppercaseHeadings } = require('../utils/contentProcessor');
 const {
     assertValidGeneratedContent,
@@ -127,6 +128,7 @@ class ParallelProcessingService {
             visualTopicSlugs: Array.isArray(file.visualTopics)
                 ? file.visualTopics.map(topic => topic.topic_slug)
                 : [],
+            visualTopics: Array.isArray(file.visualTopics) ? file.visualTopics : [],
         };
         
         try {
@@ -159,6 +161,9 @@ class ParallelProcessingService {
                 sourceMarkdown: content,
             });
             assertSourceHeadingCoverage(content, rewrittenContent);
+            assertVisualCompliance(rewrittenContent, {
+                visualTopics: file.visualTopics,
+            });
 
             // O chamador pode adiar a escrita para publicar cada resultado
             // individualmente e de forma atômica após a validação.

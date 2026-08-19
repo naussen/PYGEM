@@ -122,6 +122,8 @@ O PYGEM associa somente os tópicos pertinentes a cada arquivo por `source_index
 
 A mesma `diversification_seed` sempre produz as mesmas variantes. Alterar a semente permite outra composição compatível sem trocar o tipo da ferramenta nem modificar causalidade, ordem normativa ou condição lógica. Variantes explícitas no plano são preservadas somente quando compatíveis com o recurso e seu papel semântico.
 
+Quando há plano visual ativo, a saída é conferida antes da gravação: tabelas são contadas como blocos GFM, Mermaid como cercas completas, realces como blockquotes/admonitions ou `<mark>`, e mnemônicos por marcação explícita. Recursos obrigatórios ausentes, excedentes, fora da seção-alvo ou com Mermaid inválido fazem o arquivo falhar.
+
 As opções de linha de comando prevalecem sobre as variáveis de ambiente. `--visual-guide` e `--visual-plan` são mutuamente exclusivos; o guia Markdown exige `--visual-discipline`. Opcionalmente, use `--visual-guide-id` e `--visual-seed`.
 
 ## Variáveis de ambiente

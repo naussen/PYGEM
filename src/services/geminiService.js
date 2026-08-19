@@ -16,6 +16,7 @@ const {
     validateSourceHeadingCoverage,
     assertSourceHeadingCoverage,
 } = require('../utils/validation');
+const { validateVisualCompliance } = require('../visual/visualComplianceValidator');
 const { normalizeUppercaseHeadings } = require('../utils/contentProcessor');
 const { createRewriteCheckpoint } = require('./rewriteCheckpointService');
 let genAI = null;
@@ -678,7 +679,10 @@ async function generateValidatedRewrite(content, prompt, options = {}) {
                 sourceMarkdown: content,
             });
             const headingCoverage = validateSourceHeadingCoverage(content, normalizedAccumulated);
-            if (outputValidation.valid && headingCoverage.valid) {
+            const visualCompliance = options.visualTopics?.length > 0
+                ? validateVisualCompliance(normalizedAccumulated, { visualTopics: options.visualTopics })
+                : { valid: true, issues: [] };
+            if (outputValidation.valid && headingCoverage.valid && visualCompliance.valid) {
                 logger.info(`${label} reescrito com sucesso (${normalizedAccumulated.length} caracteres)`);
                 return normalizedAccumulated;
             }
@@ -686,7 +690,11 @@ async function generateValidatedRewrite(content, prompt, options = {}) {
             lastFailure = {
                 reason: GENERATION_FAILURE.INVALID_STRUCTURE,
                 attempt,
-                details: [...outputValidation.issues, ...headingCoverage.issues].join(' '),
+                details: [
+                    ...outputValidation.issues,
+                    ...headingCoverage.issues,
+                    ...visualCompliance.issues.map(issue => issue.message),
+                ].join(' '),
                 maxOutputTokens,
                 originalLength: content.length,
                 outputLength: accumulated.length,
@@ -757,6 +765,7 @@ async function rewriteBlockWithRecovery(block, prompt, label, options = {}) {
             parentWorkUnitId: options.parentWorkUnitId,
             recoveryDepth: depth,
             generationExecutor: options.generationExecutor,
+            visualTopics: depth === 0 ? options.visualTopics : [],
         });
     } catch (error) {
         const fragments = getRecoverySubdivision(block, error, depth);
@@ -796,6 +805,7 @@ async function rewriteBlockWithRecovery(block, prompt, label, options = {}) {
                 parentWorkUnitId: options.parentWorkUnitId,
                 recoveryDepth: depth,
                 generationExecutor: options.generationExecutor,
+                visualTopics: depth === 0 ? options.visualTopics : [],
             });
         }
 
@@ -857,6 +867,7 @@ const geminiService = {
                 workUnitId: 'single',
                 minOutputRatio: 0.75,
                 basePrompt: prompt,
+                visualTopics: options.visualTopics,
             });
         } catch (error) {
             logger.error(`Falha no fluxo de reescrita: ${error.message}`);
@@ -1012,6 +1023,20 @@ const geminiService = {
             logger.info(`Processamento em blocos concluído para ${fileName}: ${processedBlocks}/${blocks.length} blocos, ${blockErrors} erros`);
 
             assertSourceHeadingCoverage(content, finalContent);
+
+            if (options.visualTopics?.length > 0) {
+                const compliance = validateVisualCompliance(finalContent, {
+                    visualTopics: options.visualTopics,
+                });
+                if (!compliance.valid) {
+                    const error = new Error(
+                        `Conformidade visual inválida: ${compliance.issues.map(issue => issue.message).join(' ')}`
+                    );
+                    error.code = 'PYGEM_VISUAL_COMPLIANCE_INVALID';
+                    error.details = compliance;
+                    throw error;
+                }
+            }
 
             if (failedBlockDetails.length > 0) {
                 logger.warn(`Blocos preservados sem reescrita: ${failedBlockDetails.map(detail => `#${detail.blockNumber}`).join(', ')}`);

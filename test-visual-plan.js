@@ -40,6 +40,13 @@ const {
 } = require('./src/services/fileServiceMd');
 const { createRewriteCheckpoint } = require('./src/services/rewriteCheckpointService');
 const {
+    detectVisualResources,
+} = require('./src/visual/visualResourceDetector');
+const {
+    validateVisualCompliance,
+    assertVisualCompliance,
+} = require('./src/visual/visualComplianceValidator');
+const {
     getCompatibleVariants,
     getStableVariantIndex,
     selectVariantFamily,
@@ -323,6 +330,118 @@ const selectedVisualPrompt = getVisualRequirementsPrompt([selectedPlan.topics[0]
 assert.match(selectedVisualPrompt, /variante=/u);
 assert.match(selectedVisualPrompt, /estrutura:/u);
 assert.match(selectedVisualPrompt, /Não copie redação, cores, geometria/u);
+
+const complianceTopic = {
+    topic_slug: 'teste-visual',
+    canonical_title: 'Teste visual',
+    requirements: [
+        {
+            resource: 'table',
+            semantic_role: 'comparison',
+            required: true,
+            minimum: 1,
+            maximum: 1,
+        },
+        {
+            resource: 'mermaid',
+            semantic_role: 'process_flow',
+            required: true,
+            minimum: 1,
+            maximum: 1,
+            target_section: 'Fluxo',
+        },
+        {
+            resource: 'highlight',
+            semantic_role: 'rule',
+            required: true,
+            minimum: 1,
+            maximum: 1,
+        },
+        {
+            resource: 'mnemonic',
+            semantic_role: 'memory_key',
+            required: true,
+            minimum: 1,
+            maximum: 1,
+        },
+    ],
+};
+const compliantMarkdown = [
+    '## Teste visual',
+    '',
+    '| Critério | Caso A | Caso B |',
+    '| --- | --- | --- |',
+    '| Regra | Sim | Não |',
+    '',
+    '### Fluxo',
+    '',
+    '```mermaid',
+    'flowchart TD',
+    '    A[Início] --> B[Fim]',
+    '```',
+    '',
+    '> **Atenção:** preserve a regra.',
+    '',
+    '### Mnemônico',
+    '',
+    '**Mnemônico:** ABC.',
+].join('\n');
+const detectedVisuals = detectVisualResources(compliantMarkdown);
+assert.deepStrictEqual(
+    detectedVisuals.counts,
+    { table: 1, mermaid: 1, highlight: 1, mnemonic: 1 },
+    'Detector deve contar blocos, não linhas isoladas'
+);
+assert.strictEqual(
+    validateVisualCompliance(compliantMarkdown, { visualTopics: [complianceTopic] }).valid,
+    true,
+    'Saída com todos os recursos e seção correta deve ser aceita'
+);
+assert.doesNotThrow(
+    () => assertVisualCompliance(compliantMarkdown, { visualTopics: [complianceTopic] })
+);
+const missingTable = compliantMarkdown
+    .replace('| Critério | Caso A | Caso B |\n', '')
+    .replace('| --- | --- | --- |\n', '')
+    .replace('| Regra | Sim | Não |\n', '');
+assert(
+    validateVisualCompliance(missingTable, { visualTopics: [complianceTopic] }).issues
+        .some(issue => issue.code === 'VISUAL_RESOURCE_MISSING' && issue.resource === 'table'),
+    'Tabela obrigatória ausente deve ser rejeitada'
+);
+const wrongTarget = compliantMarkdown.replace('### Fluxo', '### Outro fluxo');
+assert(
+    validateVisualCompliance(wrongTarget, { visualTopics: [complianceTopic] }).issues
+        .some(issue => issue.code === 'VISUAL_TARGET_SECTION_MISSING'),
+    'Recurso fora da seção-alvo deve ser rejeitado'
+);
+const invalidMermaid = compliantMarkdown.replace('A[Início] --> B[Fim]', 'A[Início] -->');
+assert(
+    validateVisualCompliance(invalidMermaid, { visualTopics: [complianceTopic] }).issues
+        .some(issue => issue.code === 'VISUAL_MERMAID_INVALID'),
+    'Mermaid inválido deve ser rejeitado'
+);
+const repeatedFact = [
+    '## Teste visual',
+    '',
+    '| Fato | Valor |',
+    '| --- | --- |',
+    '| A regra exige revisão humana antes da publicação | Sim |',
+    '',
+    '> A regra exige revisão humana antes da publicação.',
+].join('\n');
+const repeatedFactTopic = {
+    ...complianceTopic,
+    requirements: [
+        complianceTopic.requirements[0],
+        complianceTopic.requirements[2],
+    ],
+};
+assert(
+    validateVisualCompliance(repeatedFact, { visualTopics: [repeatedFactTopic] }).issues
+        .some(issue => issue.code === 'VISUAL_FACT_DUPLICATED'),
+    'Fato textual repetido em recursos diferentes deve ser sinalizado'
+);
 
 const completeManifest = createVisualManifest({
     sourceFile: 'C:\\fontes\\010_Auditoria.md',

@@ -17,3 +17,6 @@
 - impede variantes incompatíveis com a função didática antes da geração;
 - orienta estruturas distintas para tabelas, Mermaid e realces sem copiar a identidade da referência;
 - inclui variantes determinísticas nos planos produzidos pelo compilador de linha de comando.
+- detecta blocos de tabela, Mermaid, realce e mnemônico na saída Markdown;
+- valida quantidades mínimas/máximas, seção-alvo e sintaxe Mermaid por tópico;
+- rejeita conformidade visual inválida antes da publicação sequencial ou paralela.

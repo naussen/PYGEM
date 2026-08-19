@@ -32,6 +32,7 @@ const {
     selectVisualTopicsForFile,
     writeVisualPlanAtomic,
 } = require('./visual/visualContextService');
+const { assertVisualCompliance } = require('./visual/visualComplianceValidator');
 
 // Permite escolher entre configuração normal ou otimizada
 const useOptimizedConfig = process.env.USE_OPTIMIZED_CONFIG === 'true' || process.argv.includes('--optimized');
@@ -426,6 +427,7 @@ async function main() {
                             {
                                 visualPlanHash: fileData.visualPlanHash,
                                 visualTopicSlugs: fileData.visualTopics.map(topic => topic.topic_slug),
+                                visualTopics: fileData.visualTopics,
                             }
                         );
                     } else {
@@ -436,6 +438,7 @@ async function main() {
                             {
                                 visualPlanHash: fileData.visualPlanHash,
                                 visualTopicSlugs: fileData.visualTopics.map(topic => topic.topic_slug),
+                                visualTopics: fileData.visualTopics,
                             }
                         );
                     }
@@ -458,6 +461,9 @@ async function main() {
                         sourceMarkdown: content,
                     });
                     assertSourceHeadingCoverage(content, rewrittenContent);
+                    assertVisualCompliance(rewrittenContent, {
+                        visualTopics: fileData.visualTopics,
+                    });
                     
                     // Log das mudanças aplicadas
                     if (enhancementResult.hasChanges) {
