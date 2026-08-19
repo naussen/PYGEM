@@ -9,7 +9,7 @@
     "start:optimized": "node src/app-md.js --optimized",
     "test:mermaid": "node test-mermaid-validation.js",
     "test:core": "node test-pygem-core.js && node test-rewrite-recovery.js",
-    "test:visual": "node test-visual-plan.js",
+    "test:visual": "node test-visual-plan.js && node test/test-visual-fixtures.js",
     "visual:compile": "node src/visual/compileVisualGuideCli.js"
   },
   "dependencies": {

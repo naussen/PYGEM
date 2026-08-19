@@ -9,7 +9,8 @@
 - Pacote 5 concluído no LEIAUT: leitura do plano/manifesto, instrução restrita e relatório de validação.
 - Pacote 6 concluído no LEIAUT: divergência obrigatória bloqueia a publicação e a gravação é atômica.
 - Pacote 7 concluído no LEIAUT: `topic_slug` canônico, detecção conservadora de slugs suspeitos, conflitos por lote e mapa explícito de migração sem alteração de banco.
-- Pacotes 8 a 10 pendentes.
+- Pacote 8 concluído no PYGEM: fixtures artificiais dos pilotos e testes sem Vertex AI para contrato visual e bloqueios.
+- Pacotes 9 e 10 pendentes.
 
 ## 1. Objetivo
 
@@ -408,6 +409,11 @@ Adicionar detector conservador de slug suspeito, considerando:
 Antes de reprocessar conteúdo já importado, produzir mapa explícito `topic_id_antigo → topic_id_novo`. Alteração de IDs existentes pode duplicar tópicos e romper URLs, progresso ou anotações; não executar migração de banco nesta tarefa sem autorização específica.
 
 ### Pacote 8 — Fixtures sem Vertex AI
+
+Implementado em `test/fixtures/visual/` e `test/test-visual-fixtures.js`, com
+execução integrada a `npm run test:visual`. As fixtures cobrem os pilotos 010,
+022 e 023, variantes estáveis, hash/plano inválido, recurso ausente, seção
+incorreta e Mermaid inválido sem chamadas externas.
 
 Criar fixtures pequenas e artificiais, sem copiar o material integral:
 

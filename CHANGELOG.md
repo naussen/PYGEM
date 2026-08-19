@@ -1,5 +1,11 @@
 # Changelog
 
+## 2026-08-19 — fixtures visuais
+
+- adiciona fixtures artificiais dos pilotos 010, 022 e 023;
+- cobre validação de manifesto, variantes determinísticas, recursos ausentes,
+  seção-alvo incorreta e Mermaid inválido sem chamadas ao Vertex AI.
+
 ## 2026-08-19
 
 - adiciona schemas v1 do plano e do manifesto visual;

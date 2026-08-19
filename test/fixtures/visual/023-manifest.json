@@ -1,0 +1,22 @@
+{
+  "schema_version": 1,
+  "status": "complete",
+  "source_file": "023-source.md",
+  "output_file": "023-output.md",
+  "source_sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+  "output_sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+  "visual_plan_sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+  "topics": [{
+    "topic_slug": "pericia-contabil",
+    "selected_variants": [
+      {"resource":"table","semantic_role":"comparison","variant_family":"criteria-as-rows"},
+      {"resource":"highlight","semantic_role":"exception","variant_family":"exception-block"}
+    ],
+    "requirements": [
+      {"resource":"table","semantic_role":"comparison","required":true,"minimum":1,"maximum":1},
+      {"resource":"highlight","semantic_role":"exception","required":true,"minimum":1,"maximum":1}
+    ],
+    "observed_resources": [{"resource":"table","count":1},{"resource":"highlight","count":1}],
+    "violations": []
+  }]
+}

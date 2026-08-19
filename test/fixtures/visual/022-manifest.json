@@ -1,0 +1,24 @@
+{
+  "schema_version": 1,
+  "status": "complete",
+  "source_file": "022-source.md",
+  "output_file": "022-output.md",
+  "source_sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+  "output_sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+  "visual_plan_sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+  "topics": [{
+    "topic_slug": "relatorio-de-auditoria",
+    "selected_variants": [
+      {"resource":"table","semantic_role":"comparison","variant_family":"entities-as-rows"},
+      {"resource":"mermaid","semantic_role":"decision_flow","variant_family":"decision-first"},
+      {"resource":"highlight","semantic_role":"critical_order","variant_family":"keyword-rule"}
+    ],
+    "requirements": [
+      {"resource":"table","semantic_role":"comparison","required":true,"minimum":1,"maximum":1},
+      {"resource":"mermaid","semantic_role":"decision_flow","required":true,"minimum":1,"maximum":1,"target_section":"Decisão"},
+      {"resource":"highlight","semantic_role":"critical_order","required":true,"minimum":1,"maximum":1}
+    ],
+    "observed_resources": [{"resource":"table","count":1},{"resource":"mermaid","count":1},{"resource":"highlight","count":1}],
+    "violations": []
+  }]
+}
