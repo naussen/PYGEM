@@ -5,6 +5,7 @@
 - adiciona preflight restrito aos pilotos 010, 022 e 023;
 - registra hashes, modelo, seed e diretórios sem chamar Vertex AI nem importar resultados;
 - exige diretório de saída novo e preserva fontes originais.
+- adiciona CLI de preflight com parâmetros explícitos para fonte, plano e saída.
 
 ## 2026-08-19 — fixtures visuais
 

@@ -10,7 +10,8 @@
     "test:mermaid": "node test-mermaid-validation.js",
     "test:core": "node test-pygem-core.js && node test-rewrite-recovery.js",
     "test:visual": "node test-visual-plan.js && node test/test-visual-fixtures.js && node test/test-visual-pilots.js",
-    "visual:compile": "node src/visual/compileVisualGuideCli.js"
+    "visual:compile": "node src/visual/compileVisualGuideCli.js",
+    "visual:pilots:preflight": "node src/visual/runVisualPilotsCli.js"
   },
   "dependencies": {
     "@google/genai": "^2.12.0",

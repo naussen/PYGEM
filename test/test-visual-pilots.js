@@ -6,6 +6,12 @@ const {
     PILOT_IDS,
     preparePilotRun,
 } = require('../src/visual/visualPilotRunner');
+const { parseArgs } = require('../src/visual/runVisualPilotsCli');
+
+assert.deepStrictEqual(
+    parseArgs(['--source-dir', 'fontes', '--plan', 'plano.json', '--output-dir', 'saida']),
+    { 'source-dir': 'fontes', plan: 'plano.json', 'output-dir': 'saida' }
+);
 
 const fixtures = path.join(__dirname, 'fixtures', 'visual');
 const temporaryRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'pygem-visual-pilots-'));
