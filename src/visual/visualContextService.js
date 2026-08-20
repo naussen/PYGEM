@@ -75,6 +75,44 @@ function parseVisualOptions(argv = process.argv.slice(2), env = process.env) {
     return options;
 }
 
+function stripWrappingQuotes(value) {
+    const trimmed = String(value || '').trim();
+    if (trimmed.length >= 2) {
+        const first = trimmed[0];
+        const last = trimmed[trimmed.length - 1];
+        if ((first === '"' && last === '"') || (first === "'" && last === "'")) {
+            return trimmed.slice(1, -1).trim();
+        }
+    }
+    return trimmed;
+}
+
+function promptForOptionalVisualGuide(options, question) {
+    if (options.visualGuidePath || options.visualPlanPath) return options;
+    if (typeof question !== 'function') {
+        throw new TypeError('A função de leitura interativa é obrigatória.');
+    }
+
+    const visualGuidePath = stripWrappingQuotes(question(
+        '🎨 Caminho do guia visual Markdown (opcional; Enter para ignorar): '
+    ));
+    if (!visualGuidePath) return options;
+
+    const discipline = String(question('📚 Disciplina descrita no guia visual: ') || '').trim();
+    if (!discipline) {
+        throw makeVisualError(
+            'PYGEM_VISUAL_DISCIPLINE_REQUIRED',
+            'A disciplina é obrigatória quando um guia visual Markdown é informado.'
+        );
+    }
+
+    return {
+        ...options,
+        visualGuidePath,
+        discipline,
+    };
+}
+
 function readBoundedFile(filePath, label) {
     const resolvedPath = path.resolve(String(filePath || ''));
     if (!fs.existsSync(resolvedPath) || !fs.statSync(resolvedPath).isFile()) {
@@ -224,6 +262,7 @@ function writeVisualPlanAtomic(outputDirectory, plan) {
 
 module.exports = {
     parseVisualOptions,
+    promptForOptionalVisualGuide,
     loadVisualContext,
     compactForMatch,
     extractTitleCandidates,

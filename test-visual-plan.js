@@ -26,6 +26,7 @@ const {
 } = require('./src/visual/compileVisualGuideCli');
 const {
     parseVisualOptions,
+    promptForOptionalVisualGuide,
     loadVisualContext,
     selectVisualTopicsForFile,
     writeVisualPlanAtomic,
@@ -275,6 +276,49 @@ assert.throws(
     error => error.code === 'PYGEM_VISUAL_DISCIPLINE_REQUIRED',
     'Compilação integrada do guia exige disciplina explícita'
 );
+
+const interactiveAnswers = ['"C:\\guias\\setores.visual.md"', 'Direito Administrativo'];
+const interactiveOptions = promptForOptionalVisualGuide(
+    parseVisualOptions([], {}),
+    () => interactiveAnswers.shift()
+);
+assert.strictEqual(
+    interactiveOptions.visualGuidePath,
+    'C:\\guias\\setores.visual.md',
+    'Prompt deve aceitar caminho entre aspas copiado pelo usuário'
+);
+assert.strictEqual(
+    interactiveOptions.discipline,
+    'Direito Administrativo',
+    'Prompt deve associar a disciplina ao guia Markdown'
+);
+assert.deepStrictEqual(
+    promptForOptionalVisualGuide(parseVisualOptions([], {}), () => ''),
+    parseVisualOptions([], {}),
+    'Enter deve preservar o fluxo sem guia visual'
+);
+assert.throws(
+    () => promptForOptionalVisualGuide(parseVisualOptions([], {}), (() => {
+        const answers = ['guia.md', ''];
+        return () => answers.shift();
+    })()),
+    error => error.code === 'PYGEM_VISUAL_DISCIPLINE_REQUIRED',
+    'Guia informado no prompt deve exigir disciplina'
+);
+let preconfiguredPromptCalled = false;
+const preconfiguredOptions = parseVisualOptions(
+    ['--visual-plan', 'plano.json'],
+    {}
+);
+assert.strictEqual(
+    promptForOptionalVisualGuide(preconfiguredOptions, () => {
+        preconfiguredPromptCalled = true;
+        return '';
+    }),
+    preconfiguredOptions,
+    'Plano configurado deve dispensar o prompt interativo'
+);
+assert.strictEqual(preconfiguredPromptCalled, false);
 
 const groupedPlan = {
     schema_version: 1,

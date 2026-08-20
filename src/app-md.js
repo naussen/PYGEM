@@ -28,6 +28,7 @@ const PerformanceLogger = require('./services/performanceLogger');
 const { sha256 } = require('./visual/visualGuideCompiler');
 const {
     parseVisualOptions,
+    promptForOptionalVisualGuide,
     loadVisualContext,
     selectVisualTopicsForFile,
     writeVisualPlanAtomic,
@@ -50,7 +51,13 @@ async function main() {
         }
         logger.info('Iniciando Vertex AI Markdown Rewriter...');
 
-        const visualOptions = parseVisualOptions(process.argv.slice(2), process.env);
+        let visualOptions = parseVisualOptions(process.argv.slice(2), process.env);
+        if (process.stdin.isTTY && !visualOptions.visualGuidePath && !visualOptions.visualPlanPath) {
+            visualOptions = promptForOptionalVisualGuide(
+                visualOptions,
+                prompt => readline.question(prompt)
+            );
+        }
         const visualContext = loadVisualContext(visualOptions);
         if (visualContext) {
             console.log(
@@ -165,7 +172,17 @@ async function main() {
         const deleteOriginal = false;   // Nunca deletar originais
 
         // Lê os arquivos .md de todas as subpastas
-        const directoriesWithFiles = readAllMdFilesInSubdirectories(inputDirectory);
+        const visualGuideInputPath = visualContext?.inputType === 'guide'
+            ? path.resolve(visualContext.inputPath)
+            : null;
+        const directoriesWithFiles = readAllMdFilesInSubdirectories(inputDirectory)
+            .map(directoryInfo => ({
+                ...directoryInfo,
+                files: directoryInfo.files.filter(file => (
+                    !visualGuideInputPath || path.resolve(file) !== visualGuideInputPath
+                )),
+            }))
+            .filter(directoryInfo => directoryInfo.files.length > 0);
         if (directoriesWithFiles.length === 0) {
             logger.warn(`Nenhum arquivo .md encontrado em: ${inputDirectory} ou suas subpastas`);
             console.log('⚠️  Nenhum arquivo .md encontrado no diretório especificado ou suas subpastas.');

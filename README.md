@@ -75,6 +75,11 @@ Durante a execução, informe:
 1. Diretório de entrada com os arquivos `.md` originais.
 2. Diretório de saída dos arquivos reescritos.
 
+Em um terminal interativo, o PYGEM também pergunta pelo caminho de um guia visual
+Markdown opcional. Pressione Enter para continuar sem guia. Quando um guia for
+informado, indique também a disciplina descrita nele. Se o guia estiver dentro do
+diretório de entrada, ele será usado apenas como instrução e não será reescrito.
+
 Os arquivos originais são preservados, salvo quando uma opção explícita de substituição for escolhida pela aplicação.
 
 Quando a primeira linha útil usa o marcador de título `@@ Título` ou `@@@ Título`, o PYGEM preserva essa linha literalmente na saída. A regra vale somente para o título do material; subtítulos e seções Markdown continuam sujeitos à reescrita e à normalização editorial. Além da instrução enviada ao modelo, o título original é restaurado deterministicamente antes da validação e da gravação.
@@ -82,6 +87,21 @@ Quando a primeira linha útil usa o marcador de título `@@ Título` ou `@@@ Tí
 ## Plano visual v1
 
 O PYGEM possui o contrato inicial para converter um relatório visual descritivo em um plano JSON validado. Essa compilação é offline, determinística e não chama o Vertex AI:
+
+Exemplo mínimo de guia aceito, indicando os recursos didáticos do tópico 6:
+
+```markdown
+# Guia visual de Direito Administrativo
+
+### 6. Poder de polícia [arquivo: 006]
+
+**Correção recomendada para Markdown:** usar uma tabela comparativa e uma caixa
+de atenção para destacar a exceção relevante ao leitor.
+```
+
+Cada tópico deve usar um cabeçalho `###`. A marca `[arquivo: 006]` associa a regra
+explicitamente ao arquivo iniciado por `006`; alternativamente, o título do tópico
+pode corresponder ao título presente no material de entrada.
 
 ```powershell
 npm.cmd run visual:compile -- C:\caminho\auditoria.visual.md --discipline "Auditoria"

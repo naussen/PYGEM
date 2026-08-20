@@ -1,5 +1,12 @@
 # Changelog
 
+## 2026-08-20 — guia visual opcional no fluxo interativo
+
+- adiciona pergunta opcional para selecionar um guia visual Markdown ao iniciar o PYGEM;
+- solicita a disciplina somente quando o guia é informado e preserva o fluxo anterior com Enter;
+- impede que o próprio guia seja reescrito quando estiver dentro do diretório de entrada;
+- documenta um exemplo de tópico com tabela comparativa e caixa de atenção.
+
 ## 2026-08-19 — preflight dos pilotos visuais
 
 - adiciona preflight restrito aos pilotos 010, 022 e 023;
