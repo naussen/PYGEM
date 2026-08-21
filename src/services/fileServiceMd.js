@@ -197,12 +197,13 @@ const getRewrittenOutputPath = (outputDirectory, inputDirectory, originalFilePat
 };
 
 /**
- * Copia atomicamente um arquivo sem mapa visual, preservando bytes, nome e subpasta.
+ * Copia atomicamente um arquivo inalterado, preservando bytes, nome e subpasta.
  */
 const writeUnchangedFileAtomic = (
     outputDirectory,
     inputDirectory,
-    originalFilePath
+    originalFilePath,
+    reason = 'sem mapa visual'
 ) => {
     const outputFilePath = getRewrittenOutputPath(
         outputDirectory,
@@ -210,7 +211,7 @@ const writeUnchangedFileAtomic = (
         originalFilePath
     );
     if (path.resolve(outputFilePath) === path.resolve(originalFilePath)) {
-        logger.info(`Arquivo sem mapa visual preservado no local original: ${originalFilePath}`);
+        logger.info(`Arquivo preservado no local original (${reason}): ${originalFilePath}`);
         return outputFilePath;
     }
 
@@ -224,7 +225,7 @@ const writeUnchangedFileAtomic = (
         if (fs.existsSync(temporaryOutputPath)) fs.unlinkSync(temporaryOutputPath);
     }
 
-    logger.info(`Arquivo sem mapa visual copiado sem alterações: ${outputFilePath}`);
+    logger.info(`Arquivo copiado sem alterações (${reason}): ${outputFilePath}`);
     return outputFilePath;
 };
 

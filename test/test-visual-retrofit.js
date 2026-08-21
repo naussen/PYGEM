@@ -11,8 +11,18 @@ const {
     validateVisualFragment,
     applyInsertions,
     isSubsequence,
+    isPathInsideDirectory,
     runVisualRetrofit,
 } = require('../src/visual/visualRetrofitService');
+
+assert.strictEqual(
+    isPathInsideDirectory('C:\\PRO\\cg\\saida\\001_reescrito.md', 'C:\\PRO\\cg\\saida'),
+    true
+);
+assert.strictEqual(
+    isPathInsideDirectory('C:\\PRO\\cg\\001_reescrito.md', 'C:\\PRO\\cg\\saida'),
+    false
+);
 
 assert.deepStrictEqual(
     parseArgs([
@@ -190,6 +200,32 @@ async function runIntegrationTest() {
         assert(isSubsequence(mappedSource, mappedOutput));
         assert(mappedOutput.includes('| Conceito | Finalidade |'));
         assert(fs.existsSync(path.join(outputDirectory, '_visual-retrofit-report.json')));
+
+        const nestedVisualDirectory = path.join(inputDirectory, 'visual');
+        const nestedOutputDirectory = path.join(inputDirectory, 'saida');
+        fs.renameSync(visualDirectory, nestedVisualDirectory);
+        fs.mkdirSync(nestedOutputDirectory, { recursive: true });
+        fs.writeFileSync(
+            path.join(nestedOutputDirectory, '001_saida-anterior_reescrito.md'),
+            '@@ Saída anterior\n\nNão pode voltar para a entrada.',
+            'utf8'
+        );
+        const nestedReport = await runVisualRetrofit({
+            inputDirectory,
+            visualDirectory: nestedVisualDirectory,
+            outputDirectory: nestedOutputDirectory,
+            discipline: 'Contabilidade',
+            dryRun: true,
+        });
+        assert.strictEqual(
+            nestedReport.files.length,
+            3,
+            'Pastas visual e de saída aninhadas não podem contaminar a lista de fontes'
+        );
+        assert(
+            nestedReport.files.every(item => !item.file.startsWith(`visual${path.sep}`)),
+            'Mapas visuais aninhados não podem ser tratados como fontes'
+        );
     } finally {
         fs.rmSync(temporaryRoot, { recursive: true, force: true });
     }

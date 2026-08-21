@@ -1,5 +1,12 @@
 # Changelog
 
+## 2026-08-21 — compatibilidade do retrofit visual
+
+- exclui as subpastas visual e de saída da varredura recursiva da entrada;
+- diferencia no log arquivos sem mapa, já compatíveis e preservados após falha;
+- exibe a contagem de pareamentos e a compatibilidade de títulos no preflight;
+- cobre em teste o uso de `visual` e `saida` dentro da pasta dos arquivos reescritos.
+
 ## 2026-08-21 — retrofit visual incremental
 
 - adiciona `npm run visual:retrofit` para enriquecer arquivos já reescritos sem reescrita integral;

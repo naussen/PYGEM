@@ -76,6 +76,15 @@ async function main(argv = process.argv.slice(2)) {
     console.log('Os arquivos de entrada nunca serão sobrescritos.');
     const preflight = await runVisualRetrofit({ ...options, dryRun: true });
     const mismatchCount = preflight.pairing.title_mismatches.length;
+    const sourceCount = preflight.files.length;
+    const missingMapCount = preflight.pairing.missing_visual_indexes.length
+        + preflight.pairing.unindexed_source_files.length;
+    const pairedCount = sourceCount - missingMapCount;
+    console.log(
+        `PAREAMENTO: ${pairedCount}/${sourceCount} arquivo(s) com mapa; `
+        + `${missingMapCount} sem mapa; `
+        + `${preflight.pairing.unused_visual_indexes.length} mapa(s) sem arquivo.`
+    );
     if (mismatchCount > 0) {
         console.log(`PREFLIGHT: ${mismatchCount} mapa(s) têm título incompatível com o arquivo pareado.`);
         preflight.pairing.title_mismatches.forEach(item => {
@@ -84,6 +93,8 @@ async function main(argv = process.argv.slice(2)) {
                 + `mapa="${item.visual_topics.join(' | ')}"`
             );
         });
+    } else {
+        console.log('COMPATIBILIDADE: títulos dos arquivos e mapas pareados são compatíveis.');
     }
     if (options.dryRun) {
         console.log('DRY-RUN: nenhuma chamada Vertex e nenhuma gravação foram realizadas.');

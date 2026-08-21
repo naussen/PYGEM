@@ -46,6 +46,15 @@ function assertSafeOutputDirectory(outputDirectory, inputDirectory, dryRun) {
     return resolved;
 }
 
+function isPathInsideDirectory(filePath, directoryPath) {
+    const relativePath = path.relative(path.resolve(directoryPath), path.resolve(filePath));
+    return relativePath === '' || (
+        relativePath !== '..'
+        && !relativePath.startsWith(`..${path.sep}`)
+        && !path.isAbsolute(relativePath)
+    );
+}
+
 function collectMissingRequirements(markdown, visualTopics) {
     const detected = detectVisualResources(markdown);
     const available = { ...detected.counts };
@@ -252,6 +261,8 @@ async function runVisualRetrofit(options) {
     });
     const files = readAllMdFilesInSubdirectories(inputDirectory)
         .flatMap(item => item.files)
+        .filter(filePath => !isPathInsideDirectory(filePath, visualDirectory))
+        .filter(filePath => !isPathInsideDirectory(filePath, outputDirectory))
         .filter(filePath => !isVisualContextInputFile(filePath, visualContext));
     const pairing = validateVisualDirectoryPairing(files, visualContext);
     const titleMismatches = findVisualTitleMismatches(files, inputDirectory, visualContext);
@@ -290,14 +301,28 @@ async function runVisualRetrofit(options) {
         const sourceHash = sha256(Buffer.from(sourceMarkdown, 'utf8'));
         const fileContext = getVisualContextForFile(filePath, sourceMarkdown, visualContext);
         if (fileContext.passthrough) {
-            if (!options.dryRun) writeUnchangedFileAtomic(outputDirectory, inputDirectory, filePath);
+            if (!options.dryRun) {
+                writeUnchangedFileAtomic(
+                    outputDirectory,
+                    inputDirectory,
+                    filePath,
+                    'sem mapa visual correspondente'
+                );
+            }
             report.files.push({ file: relativePath, status: 'copied', source_sha256: sourceHash, insertions: [] });
             continue;
         }
 
         const { missing, detected } = collectMissingRequirements(sourceMarkdown, fileContext.visualTopics);
         if (missing.length === 0) {
-            if (!options.dryRun) writeUnchangedFileAtomic(outputDirectory, inputDirectory, filePath);
+            if (!options.dryRun) {
+                writeUnchangedFileAtomic(
+                    outputDirectory,
+                    inputDirectory,
+                    filePath,
+                    'já compatível com o mapa visual'
+                );
+            }
             report.files.push({
                 file: relativePath,
                 status: 'already-compliant',
@@ -356,7 +381,12 @@ async function runVisualRetrofit(options) {
         }
 
         if (failure) {
-            writeUnchangedFileAtomic(outputDirectory, inputDirectory, filePath);
+            writeUnchangedFileAtomic(
+                outputDirectory,
+                inputDirectory,
+                filePath,
+                `falha no ajuste visual: ${failure.message}`
+            );
             report.files.push({
                 file: relativePath,
                 status: 'failed-copied',
@@ -409,5 +439,6 @@ module.exports = {
     findInsertionOffset,
     applyInsertions,
     isSubsequence,
+    isPathInsideDirectory,
     runVisualRetrofit,
 };
