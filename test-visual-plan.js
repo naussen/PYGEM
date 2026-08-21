@@ -28,8 +28,11 @@ const {
     parseVisualOptions,
     promptForOptionalVisualGuide,
     loadVisualContext,
+    getVisualContextForFile,
+    validateVisualDirectoryPairing,
     selectVisualTopicsForFile,
     writeVisualPlanAtomic,
+    writeVisualContextPlansAtomic,
 } = require('./src/visual/visualContextService');
 const {
     getRewritingPrompt,
@@ -248,6 +251,7 @@ assert.deepStrictEqual(
     parseVisualOptions([], {}),
     {
         visualGuidePath: null,
+        visualGuideDirectory: null,
         visualPlanPath: null,
         discipline: null,
         guideId: null,
@@ -263,6 +267,14 @@ assert.strictEqual(
     'cli.json',
     'Opção de CLI deve prevalecer sobre variável de ambiente'
 );
+assert.strictEqual(
+    parseVisualOptions(
+        ['--visual-guide-dir', 'visuais', '--visual-discipline', 'Contabilidade'],
+        {}
+    ).visualGuideDirectory,
+    'visuais',
+    'CLI deve aceitar pasta de arquivos visuais'
+);
 assert.throws(
     () => parseVisualOptions(
         ['--visual-guide', 'guia.md', '--visual-plan', 'plano.json', '--visual-discipline', 'Auditoria'],
@@ -277,20 +289,20 @@ assert.throws(
     'Compilação integrada do guia exige disciplina explícita'
 );
 
-const interactiveAnswers = ['"C:\\guias\\setores.visual.md"', 'Direito Administrativo'];
+const interactiveAnswers = ['"C:\\guias\\setores"', 'Direito Administrativo'];
 const interactiveOptions = promptForOptionalVisualGuide(
     parseVisualOptions([], {}),
     () => interactiveAnswers.shift()
 );
 assert.strictEqual(
-    interactiveOptions.visualGuidePath,
-    'C:\\guias\\setores.visual.md',
-    'Prompt deve aceitar caminho entre aspas copiado pelo usuário'
+    interactiveOptions.visualGuideDirectory,
+    'C:\\guias\\setores',
+    'Prompt deve aceitar pasta entre aspas copiada pelo usuário'
 );
 assert.strictEqual(
     interactiveOptions.discipline,
     'Direito Administrativo',
-    'Prompt deve associar a disciplina ao guia Markdown'
+    'Prompt deve associar a disciplina aos arquivos visuais'
 );
 assert.deepStrictEqual(
     promptForOptionalVisualGuide(parseVisualOptions([], {}), () => ''),
@@ -303,7 +315,7 @@ assert.throws(
         return () => answers.shift();
     })()),
     error => error.code === 'PYGEM_VISUAL_DISCIPLINE_REQUIRED',
-    'Guia informado no prompt deve exigir disciplina'
+    'Pasta visual informada no prompt deve exigir disciplina'
 );
 let preconfiguredPromptCalled = false;
 const preconfiguredOptions = parseVisualOptions(
@@ -577,6 +589,70 @@ try {
     );
 } finally {
     fs.rmSync(cliDirectory, { recursive: true, force: true });
+}
+
+const visualDirectoryRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'pygem-visual-directory-'));
+try {
+    const guidesDirectory = path.join(visualDirectoryRoot, 'visuais');
+    const outputDirectory = path.join(visualDirectoryRoot, 'saida');
+    fs.mkdirSync(guidesDirectory, { recursive: true });
+    fs.writeFileSync(
+        path.join(guidesDirectory, '001_conceitos-visual.md'),
+        '### Conceitos básicos\n\n**Correção recomendada para Markdown:** usar uma tabela comparativa.',
+        'utf8'
+    );
+    fs.writeFileSync(
+        path.join(guidesDirectory, '002_patrimonio-visual.md'),
+        '### Patrimônio\n\n**Correção recomendada para Markdown:** usar um fluxograma Mermaid.',
+        'utf8'
+    );
+
+    const directoryContext = loadVisualContext({
+        visualGuidePath: null,
+        visualGuideDirectory: guidesDirectory,
+        visualPlanPath: null,
+        discipline: 'Contabilidade',
+        guideId: null,
+        diversificationSeed: null,
+    });
+    assert.strictEqual(directoryContext.inputType, 'guide-directory');
+    assert.strictEqual(directoryContext.plansBySourceIndex.size, 2);
+    assert.doesNotThrow(() => validateVisualDirectoryPairing([
+        '001_contabilidade_geral_avancada_reescrito.md',
+        '002_contabilidade_geral_avancada_reescrito.md',
+    ], directoryContext));
+    assert.throws(
+        () => validateVisualDirectoryPairing([
+            '001_contabilidade_geral_avancada_reescrito.md',
+        ], directoryContext),
+        error => error.code === 'PYGEM_VISUAL_DIRECTORY_PAIRING_INVALID',
+        'Preflight deve rejeitar arquivo visual sem Markdown reescrito correspondente'
+    );
+    assert.deepStrictEqual(
+        getVisualContextForFile(
+            '001_contabilidade_geral_avancada_reescrito.md',
+            '@@ Conceitos básicos',
+            directoryContext
+        ).visualTopics.map(topic => topic.topic_slug),
+        ['conceitos-basicos'],
+        'Arquivo reescrito deve receber todos os tópicos do arquivo visual com o mesmo índice'
+    );
+    assert.throws(
+        () => getVisualContextForFile(
+            '003_sem-visual_reescrito.md',
+            '@@ Sem visual',
+            directoryContext
+        ),
+        error => error.code === 'PYGEM_VISUAL_FILE_NOT_MATCHED',
+        'Arquivo sem visual correspondente deve falhar antes da chamada ao modelo'
+    );
+
+    const persistedPlans = writeVisualContextPlansAtomic(outputDirectory, directoryContext);
+    assert.strictEqual(persistedPlans.length, 2);
+    assert(persistedPlans.every(planPath => fs.existsSync(planPath)));
+    assert(persistedPlans.every(planPath => path.basename(path.dirname(planPath)) === '_visual-plans'));
+} finally {
+    fs.rmSync(visualDirectoryRoot, { recursive: true, force: true });
 }
 
 const reuseDirectory = fs.mkdtempSync(path.join(os.tmpdir(), 'pygem-visual-reuse-'));

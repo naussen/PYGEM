@@ -72,13 +72,19 @@ npm run start:optimized
 
 Durante a execução, informe:
 
-1. Diretório de entrada com os arquivos `.md` originais.
-2. Diretório de saída dos arquivos reescritos.
+1. Pasta opcional com os arquivos visuais `.md`.
+2. Disciplina comum aos arquivos visuais, quando a pasta for informada.
+3. Diretório de entrada com os arquivos `.md` a reescrever.
+4. Diretório de saída dos arquivos processados.
 
-Em um terminal interativo, o PYGEM também pergunta pelo caminho de um guia visual
-Markdown opcional. Pressione Enter para continuar sem guia. Quando um guia for
-informado, indique também a disciplina descrita nele. Se o guia estiver dentro do
-diretório de entrada, ele será usado apenas como instrução e não será reescrito.
+Em um terminal interativo, o PYGEM pergunta pela pasta dos arquivos visuais.
+Pressione Enter para continuar sem contexto visual. Cada arquivo visual deve começar
+com o mesmo índice de três dígitos do arquivo reescrito correspondente. Por exemplo,
+`001_conceitos-visual.md` é lido em conjunto com
+`001_contabilidade_geral_avancada_reescrito.md`. Índices ausentes, duplicados ou sem
+correspondência interrompem o arquivo antes da chamada ao Vertex AI. Se a pasta visual
+estiver dentro do diretório de entrada, seus arquivos serão usados somente como
+instrução e não serão reescritos.
 
 Os arquivos originais são preservados, salvo quando uma opção explícita de substituição for escolhida pela aplicação.
 
@@ -135,8 +141,15 @@ Os schemas ficam em `src/visual/schemas`. O processamento principal aceita diret
 
 ```powershell
 npm.cmd start -- --visual-guide C:\caminho\auditoria.visual.md --visual-discipline "Auditoria"
+npm.cmd start -- --visual-guide-dir C:\caminho\visuais --visual-discipline "Auditoria"
 npm.cmd start -- --visual-plan C:\caminho\auditoria.visual-plan.json
 ```
+
+`--visual-guide-dir` também pode ser configurado por `PYGEM_VISUAL_GUIDE_DIR`. Nessa
+modalidade, todos os arquivos `.md` diretamente contidos na pasta são compilados
+individualmente. Os planos normalizados são gravados em `_visual-plans` no diretório
+de saída. O pareamento pelo prefixo do nome é explícito: o PYGEM não tenta adivinhar
+correspondências pelo número do módulo ou pela ordem alfabética.
 
 O PYGEM associa somente os tópicos pertinentes a cada arquivo por `source_index` explícito ou por título, inclusive quando o título de origem está fragmentado por OCR. Um plano ativo sem correspondência interrompe o arquivo antes da chamada ao modelo. Apenas os requisitos selecionados entram no prompt; o plano normalizado também é gravado como `_visual-plan.json` na saída. O hash do plano e os tópicos associados invalidam checkpoints e reaproveitamentos incompatíveis.
 

@@ -1,5 +1,13 @@
 # Changelog
 
+## 2026-08-21 — pasta de arquivos visuais por documento
+
+- troca o prompt interativo de guia único pela seleção opcional de uma pasta visual;
+- associa cada arquivo visual ao Markdown reescrito pelo prefixo numérico de três dígitos;
+- rejeita índices visuais ausentes, duplicados e arquivos reescritos sem visual correspondente;
+- mantém `--visual-guide` e `--visual-plan` para compatibilidade com automações existentes;
+- persiste os planos compilados individualmente em `_visual-plans` na pasta de saída.
+
 ## 2026-08-20 — guia visual opcional no fluxo interativo
 
 - adiciona pergunta opcional para selecionar um guia visual Markdown ao iniciar o PYGEM;

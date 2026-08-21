@@ -10,6 +10,7 @@ const { applyVisualVariants } = require('./visualVariants');
 
 const VISUAL_OPTION_NAMES = new Set([
     'visual-guide',
+    'visual-guide-dir',
     'visual-plan',
     'visual-discipline',
     'visual-guide-id',
@@ -54,22 +55,29 @@ function parseVisualOptions(argv = process.argv.slice(2), env = process.env) {
     const cli = collectNamedOptions(argv);
     const options = {
         visualGuidePath: cli.get('visual-guide') || env.PYGEM_VISUAL_GUIDE || null,
+        visualGuideDirectory: cli.get('visual-guide-dir') || env.PYGEM_VISUAL_GUIDE_DIR || null,
         visualPlanPath: cli.get('visual-plan') || env.PYGEM_VISUAL_PLAN || null,
         discipline: cli.get('visual-discipline') || env.PYGEM_VISUAL_DISCIPLINE || null,
         guideId: cli.get('visual-guide-id') || env.PYGEM_VISUAL_GUIDE_ID || null,
         diversificationSeed: cli.get('visual-seed') || env.PYGEM_VISUAL_SEED || null,
     };
 
-    if (options.visualGuidePath && options.visualPlanPath) {
+    const configuredInputs = [
+        options.visualGuidePath,
+        options.visualGuideDirectory,
+        options.visualPlanPath,
+    ].filter(Boolean);
+    if (configuredInputs.length > 1) {
         throw makeVisualError(
             'PYGEM_VISUAL_INPUT_CONFLICT',
-            'Informe somente --visual-guide ou --visual-plan, nunca ambos.'
+            'Informe somente --visual-guide, --visual-guide-dir ou --visual-plan.'
         );
     }
-    if (options.visualGuidePath && !String(options.discipline || '').trim()) {
+    if ((options.visualGuidePath || options.visualGuideDirectory)
+        && !String(options.discipline || '').trim()) {
         throw makeVisualError(
             'PYGEM_VISUAL_DISCIPLINE_REQUIRED',
-            '--visual-guide exige --visual-discipline ou PYGEM_VISUAL_DISCIPLINE.'
+            'Guias visuais exigem --visual-discipline ou PYGEM_VISUAL_DISCIPLINE.'
         );
     }
     return options;
@@ -88,28 +96,98 @@ function stripWrappingQuotes(value) {
 }
 
 function promptForOptionalVisualGuide(options, question) {
-    if (options.visualGuidePath || options.visualPlanPath) return options;
+    if (options.visualGuidePath || options.visualGuideDirectory || options.visualPlanPath) {
+        return options;
+    }
     if (typeof question !== 'function') {
         throw new TypeError('A função de leitura interativa é obrigatória.');
     }
 
-    const visualGuidePath = stripWrappingQuotes(question(
-        '🎨 Caminho do guia visual Markdown (opcional; Enter para ignorar): '
+    const visualGuideDirectory = stripWrappingQuotes(question(
+        '🎨 Caminho da pasta dos arquivos visuais Markdown (opcional; Enter para ignorar): '
     ));
-    if (!visualGuidePath) return options;
+    if (!visualGuideDirectory) return options;
 
-    const discipline = String(question('📚 Disciplina descrita no guia visual: ') || '').trim();
+    const discipline = String(question('📚 Disciplina descrita nos arquivos visuais: ') || '').trim();
     if (!discipline) {
         throw makeVisualError(
             'PYGEM_VISUAL_DISCIPLINE_REQUIRED',
-            'A disciplina é obrigatória quando um guia visual Markdown é informado.'
+            'A disciplina é obrigatória quando uma pasta de arquivos visuais é informada.'
         );
     }
 
     return {
         ...options,
-        visualGuidePath,
+        visualGuideDirectory,
         discipline,
+    };
+}
+
+function extractVisualFileIndex(filePath) {
+    return path.basename(String(filePath || '')).match(/^(\d{3})(?:_|-)/)?.[1] || null;
+}
+
+function loadVisualGuideDirectory(options) {
+    const resolvedDirectory = path.resolve(String(options.visualGuideDirectory || ''));
+    if (!fs.existsSync(resolvedDirectory) || !fs.statSync(resolvedDirectory).isDirectory()) {
+        throw makeVisualError(
+            'PYGEM_VISUAL_DIRECTORY_NOT_FOUND',
+            `Pasta de arquivos visuais não encontrada: ${resolvedDirectory}`
+        );
+    }
+
+    const guidePaths = fs.readdirSync(resolvedDirectory, { withFileTypes: true })
+        .filter(entry => entry.isFile() && path.extname(entry.name).toLowerCase() === '.md')
+        .map(entry => path.join(resolvedDirectory, entry.name))
+        .sort((left, right) => left.localeCompare(right, 'pt-BR'));
+    if (guidePaths.length === 0) {
+        throw makeVisualError(
+            'PYGEM_VISUAL_DIRECTORY_EMPTY',
+            `Nenhum arquivo Markdown foi encontrado na pasta visual: ${resolvedDirectory}`
+        );
+    }
+
+    const plansBySourceIndex = new Map();
+    guidePaths.forEach(guidePath => {
+        const sourceIndex = extractVisualFileIndex(guidePath);
+        if (!sourceIndex) {
+            throw makeVisualError(
+                'PYGEM_VISUAL_FILE_INDEX_REQUIRED',
+                `O arquivo visual deve começar com índice de três dígitos: ${path.basename(guidePath)}`
+            );
+        }
+        if (plansBySourceIndex.has(sourceIndex)) {
+            throw makeVisualError(
+                'PYGEM_VISUAL_FILE_INDEX_DUPLICATE',
+                `Mais de um arquivo visual usa o índice ${sourceIndex}.`
+            );
+        }
+
+        const loaded = readBoundedFile(guidePath, 'Arquivo visual');
+        const compiledPlan = compileVisualGuide(loaded.content, {
+            discipline: options.discipline,
+            guideId: options.guideId,
+            diversificationSeed: options.diversificationSeed,
+        });
+        const plan = applyVisualVariants(compiledPlan);
+        plansBySourceIndex.set(sourceIndex, {
+            inputPath: loaded.resolvedPath,
+            plan,
+            planHash: sha256(JSON.stringify(plan)),
+        });
+    });
+
+    const aggregateHash = sha256(JSON.stringify(
+        [...plansBySourceIndex.entries()].map(([sourceIndex, item]) => ({
+            sourceIndex,
+            planHash: item.planHash,
+        }))
+    ));
+    return {
+        inputType: 'guide-directory',
+        inputPath: resolvedDirectory,
+        plansBySourceIndex,
+        planHash: aggregateHash,
     };
 }
 
@@ -135,7 +213,11 @@ function readBoundedFile(filePath, label) {
 }
 
 function loadVisualContext(options) {
-    if (!options.visualGuidePath && !options.visualPlanPath) return null;
+    if (!options.visualGuidePath && !options.visualGuideDirectory && !options.visualPlanPath) {
+        return null;
+    }
+
+    if (options.visualGuideDirectory) return loadVisualGuideDirectory(options);
 
     if (options.visualPlanPath) {
         const loaded = readBoundedFile(options.visualPlanPath, 'Plano visual');
@@ -170,6 +252,91 @@ function loadVisualContext(options) {
         plan,
         planHash: sha256(JSON.stringify(plan)),
     };
+}
+
+function getVisualContextForFile(filePath, content, visualContext) {
+    if (!visualContext) {
+        return { visualTopics: [], visualPlanHash: null, plan: null };
+    }
+    if (visualContext.inputType !== 'guide-directory') {
+        return {
+            visualTopics: selectVisualTopicsForFile(filePath, content, visualContext.plan),
+            visualPlanHash: visualContext.planHash,
+            plan: visualContext.plan,
+        };
+    }
+
+    const sourceIndex = extractFileIndex(filePath);
+    if (!sourceIndex) {
+        throw makeVisualError(
+            'PYGEM_SOURCE_FILE_INDEX_REQUIRED',
+            `O arquivo reescrito deve começar com índice de três dígitos: ${path.basename(filePath)}`
+        );
+    }
+    const matched = visualContext.plansBySourceIndex.get(sourceIndex);
+    if (!matched) {
+        throw makeVisualError(
+            'PYGEM_VISUAL_FILE_NOT_MATCHED',
+            `Nenhum arquivo visual com índice ${sourceIndex} corresponde a ${path.basename(filePath)}.`
+        );
+    }
+    return {
+        visualTopics: matched.plan.topics,
+        visualPlanHash: matched.planHash,
+        plan: matched.plan,
+    };
+}
+
+function isVisualContextInputFile(filePath, visualContext) {
+    if (!visualContext) return false;
+    const resolvedFile = path.resolve(filePath);
+    if (visualContext.inputType === 'guide') {
+        return resolvedFile === path.resolve(visualContext.inputPath);
+    }
+    if (visualContext.inputType !== 'guide-directory') return false;
+    return [...visualContext.plansBySourceIndex.values()]
+        .some(item => resolvedFile === path.resolve(item.inputPath));
+}
+
+function validateVisualDirectoryPairing(filePaths, visualContext) {
+    if (!visualContext || visualContext.inputType !== 'guide-directory') return;
+
+    const sourceFilesByIndex = new Map();
+    filePaths.forEach(filePath => {
+        const sourceIndex = extractFileIndex(filePath);
+        if (!sourceIndex) {
+            throw makeVisualError(
+                'PYGEM_SOURCE_FILE_INDEX_REQUIRED',
+                `O arquivo reescrito deve começar com índice de três dígitos: ${path.basename(filePath)}`
+            );
+        }
+        if (sourceFilesByIndex.has(sourceIndex)) {
+            throw makeVisualError(
+                'PYGEM_SOURCE_FILE_INDEX_DUPLICATE',
+                `Mais de um arquivo reescrito usa o índice ${sourceIndex}: `
+                + `${path.basename(sourceFilesByIndex.get(sourceIndex))} e ${path.basename(filePath)}.`
+            );
+        }
+        sourceFilesByIndex.set(sourceIndex, filePath);
+    });
+
+    const missingVisualIndexes = [...sourceFilesByIndex.keys()]
+        .filter(sourceIndex => !visualContext.plansBySourceIndex.has(sourceIndex));
+    const unusedVisualIndexes = [...visualContext.plansBySourceIndex.keys()]
+        .filter(sourceIndex => !sourceFilesByIndex.has(sourceIndex));
+    if (missingVisualIndexes.length > 0 || unusedVisualIndexes.length > 0) {
+        const details = [];
+        if (missingVisualIndexes.length > 0) {
+            details.push(`sem visual: ${missingVisualIndexes.join(', ')}`);
+        }
+        if (unusedVisualIndexes.length > 0) {
+            details.push(`sem arquivo reescrito: ${unusedVisualIndexes.join(', ')}`);
+        }
+        throw makeVisualError(
+            'PYGEM_VISUAL_DIRECTORY_PAIRING_INVALID',
+            `Pareamento visual incompleto (${details.join('; ')}).`
+        );
+    }
 }
 
 function compactForMatch(value) {
@@ -260,14 +427,39 @@ function writeVisualPlanAtomic(outputDirectory, plan) {
     return outputPath;
 }
 
+function writeVisualContextPlansAtomic(outputDirectory, visualContext) {
+    if (!visualContext) return [];
+    if (visualContext.inputType !== 'guide-directory') {
+        return [writeVisualPlanAtomic(outputDirectory, visualContext.plan)];
+    }
+
+    const plansDirectory = path.join(outputDirectory, '_visual-plans');
+    fs.mkdirSync(plansDirectory, { recursive: true });
+    return [...visualContext.plansBySourceIndex.entries()].map(([sourceIndex, item]) => {
+        const outputPath = path.join(plansDirectory, `${sourceIndex}.visual-plan.json`);
+        const temporaryPath = `${outputPath}.${process.pid}.${Date.now()}.tmp`;
+        try {
+            fs.writeFileSync(temporaryPath, `${JSON.stringify(item.plan, null, 2)}\n`, 'utf8');
+            fs.renameSync(temporaryPath, outputPath);
+        } finally {
+            if (fs.existsSync(temporaryPath)) fs.unlinkSync(temporaryPath);
+        }
+        return outputPath;
+    });
+}
+
 module.exports = {
     parseVisualOptions,
     promptForOptionalVisualGuide,
     loadVisualContext,
+    getVisualContextForFile,
+    isVisualContextInputFile,
+    validateVisualDirectoryPairing,
     compactForMatch,
     extractTitleCandidates,
     extractFileIndex,
     titleMatchesCandidate,
     selectVisualTopicsForFile,
     writeVisualPlanAtomic,
+    writeVisualContextPlansAtomic,
 };

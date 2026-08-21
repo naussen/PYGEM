@@ -30,8 +30,10 @@ const {
     parseVisualOptions,
     promptForOptionalVisualGuide,
     loadVisualContext,
-    selectVisualTopicsForFile,
-    writeVisualPlanAtomic,
+    getVisualContextForFile,
+    isVisualContextInputFile,
+    validateVisualDirectoryPairing,
+    writeVisualContextPlansAtomic,
 } = require('./visual/visualContextService');
 const { assertVisualCompliance } = require('./visual/visualComplianceValidator');
 
@@ -52,7 +54,10 @@ async function main() {
         logger.info('Iniciando Vertex AI Markdown Rewriter...');
 
         let visualOptions = parseVisualOptions(process.argv.slice(2), process.env);
-        if (process.stdin.isTTY && !visualOptions.visualGuidePath && !visualOptions.visualPlanPath) {
+        if (process.stdin.isTTY
+            && !visualOptions.visualGuidePath
+            && !visualOptions.visualGuideDirectory
+            && !visualOptions.visualPlanPath) {
             visualOptions = promptForOptionalVisualGuide(
                 visualOptions,
                 prompt => readline.question(prompt)
@@ -60,13 +65,20 @@ async function main() {
         }
         const visualContext = loadVisualContext(visualOptions);
         if (visualContext) {
+            const visualTopicCount = visualContext.inputType === 'guide-directory'
+                ? [...visualContext.plansBySourceIndex.values()]
+                    .reduce((total, item) => total + item.plan.topics.length, 0)
+                : visualContext.plan.topics.length;
+            const visualSourceCount = visualContext.inputType === 'guide-directory'
+                ? `${visualContext.plansBySourceIndex.size} arquivo(s)`
+                : path.basename(visualContext.inputPath);
             console.log(
-                `🎨 Plano visual v1 carregado: ${visualContext.plan.topics.length} tópico(s), `
-                + `origem ${path.basename(visualContext.inputPath)}`
+                `🎨 Contrato visual carregado: ${visualTopicCount} tópico(s), `
+                + `origem ${visualSourceCount}`
             );
             logger.info(
                 `Plano visual carregado (${visualContext.inputType}, `
-                + `${visualContext.plan.topics.length} tópicos, hash ${visualContext.planHash.slice(0, 12)}).`
+                + `${visualTopicCount} tópicos, hash ${visualContext.planHash.slice(0, 12)}).`
             );
         }
         
@@ -172,14 +184,11 @@ async function main() {
         const deleteOriginal = false;   // Nunca deletar originais
 
         // Lê os arquivos .md de todas as subpastas
-        const visualGuideInputPath = visualContext?.inputType === 'guide'
-            ? path.resolve(visualContext.inputPath)
-            : null;
         const directoriesWithFiles = readAllMdFilesInSubdirectories(inputDirectory)
             .map(directoryInfo => ({
                 ...directoryInfo,
                 files: directoryInfo.files.filter(file => (
-                    !visualGuideInputPath || path.resolve(file) !== visualGuideInputPath
+                    !isVisualContextInputFile(file, visualContext)
                 )),
             }))
             .filter(directoryInfo => directoryInfo.files.length > 0);
@@ -192,9 +201,10 @@ async function main() {
         // Conta o total de arquivos
         const totalFiles = directoriesWithFiles.reduce((total, dir) => total + dir.files.length, 0);
         const totalDirs = directoriesWithFiles.length;
+        const allFiles = directoriesWithFiles.flatMap(dir => dir.files);
+        validateVisualDirectoryPairing(allFiles, visualContext);
         
         // Calcula estatísticas dos arquivos para otimização
-        const allFiles = directoriesWithFiles.flatMap(dir => dir.files);
         const fileSizes = allFiles.map(file => {
             try {
                 const content = fs.readFileSync(file, 'utf-8');
@@ -221,8 +231,13 @@ async function main() {
         // Cria o diretório de saída
         createOutputDirectory(outputDirectory);
         if (visualContext) {
-            const persistedVisualPlan = writeVisualPlanAtomic(outputDirectory, visualContext.plan);
-            console.log(`🎨 Plano visual normalizado salvo: ${persistedVisualPlan}`);
+            const persistedVisualPlans = writeVisualContextPlansAtomic(outputDirectory, visualContext);
+            console.log(
+                `🎨 ${persistedVisualPlans.length} plano(s) visual(is) normalizado(s) salvo(s) `
+                + `em ${persistedVisualPlans.length === 1
+                    ? persistedVisualPlans[0]
+                    : path.dirname(persistedVisualPlans[0])}`
+            );
         }
 
         // Obtém o prompt de reescrita
@@ -286,16 +301,19 @@ async function main() {
                             readError: 'Arquivo vazio',
                         };
                     }
-                    const visualTopics = visualContext
-                        ? selectVisualTopicsForFile(file, content, visualContext.plan)
-                        : [];
+                    const fileVisualContext = getVisualContextForFile(
+                        file,
+                        content,
+                        visualContext
+                    );
+                    const visualTopics = fileVisualContext.visualTopics;
                     return {
                         path: file,
                         name: path.basename(file),
                         content,
                         tokens,
                         visualTopics,
-                        visualPlanHash: visualContext?.planHash || null,
+                        visualPlanHash: fileVisualContext.visualPlanHash,
                         prompt: visualTopics.length > 0
                             ? getRewritingPrompt({ visualTopics })
                             : prompt,
