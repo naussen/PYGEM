@@ -1,5 +1,14 @@
 # Changelog
 
+## 2026-08-21 — retrofit visual incremental
+
+- adiciona `npm run visual:retrofit` para enriquecer arquivos já reescritos sem reescrita integral;
+- gera e valida somente recursos visuais ausentes, mantendo o conteúdo original como subsequência exata;
+- oferece `--dry-run` sem Vertex e bloqueia associações com títulos incompatíveis antes de chamadas pagas;
+- copia byte a byte arquivos sem mapa ou com falha de geração, sem publicação parcial;
+- rejeita HTML, protocolos executáveis, títulos, Mermaid inseguro e numerais ausentes na fonte;
+- grava relatório auditável com hashes, recursos inseridos e estado de cada arquivo.
+
 ## 2026-08-21 — pasta de arquivos visuais por documento
 
 - troca o prompt interativo de guia único pela seleção opcional de uma pasta visual;

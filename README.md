@@ -162,6 +162,36 @@ A mesma `diversification_seed` sempre produz as mesmas variantes. Alterar a seme
 
 Quando há plano visual ativo, a saída é conferida antes da gravação: tabelas são contadas como blocos GFM, Mermaid como cercas completas, realces como blockquotes/admonitions ou `<mark>`, e mnemônicos por marcação explícita. Recursos obrigatórios ausentes, excedentes, fora da seção-alvo ou com Mermaid inválido fazem o arquivo falhar.
 
+## Retrofit visual sem reescrita
+
+Para adaptar arquivos já reescritos sem reenviar o documento inteiro para reescrita, use:
+
+```powershell
+npm.cmd run visual:retrofit
+```
+
+O modo solicita a pasta de entrada, a pasta dos mapas, uma pasta nova de saída e a
+disciplina. Ele detecta os recursos existentes e pede ao Vertex somente blocos visuais
+ausentes. O modelo não recebe autorização para devolver o documento completo: cada
+fragmento é isolado, validado e inserido deterministicamente. Nenhuma linha original é
+substituída ou removida.
+
+Execute primeiro o preflight gratuito:
+
+```powershell
+npm.cmd run visual:retrofit -- `
+  --input-dir "C:\caminho\reescritos" `
+  --visual-dir "C:\caminho\visuais" `
+  --output-dir "C:\caminho\saida-nova" `
+  --discipline "Contabilidade Geral e Avançada" `
+  --dry-run
+```
+
+O `--dry-run` não chama o Vertex e não grava arquivos. A execução real é bloqueada se
+o título do mapa for incompatível com o conteúdo pareado. Arquivos sem mapa são copiados
+byte a byte; se qualquer fragmento falhar, o arquivo correspondente também é copiado
+intacto. A saída registra `_visual-retrofit-report.json` e os planos normalizados.
+
 As opções de linha de comando prevalecem sobre as variáveis de ambiente. `--visual-guide` e `--visual-plan` são mutuamente exclusivos; o guia Markdown exige `--visual-discipline`. Opcionalmente, use `--visual-guide-id` e `--visual-seed`.
 
 ## Variáveis de ambiente

@@ -855,6 +855,45 @@ async function rewriteBlockWithRecovery(block, prompt, label, options = {}) {
 }
 
 const geminiService = {
+    async generateVisualFragment(prompt, options = {}) {
+        if (!config.hasValidVertexConfig()) {
+            throw new Error('Configuração do Vertex AI incompleta. Verifique o arquivo .env.');
+        }
+        const models = [...new Set([config.model, config.fallbackModel].filter(Boolean))];
+        let lastError = null;
+        for (const modelName of models) {
+            try {
+                apiStats.requests++;
+                const { model } = createModel({
+                    temperature: 0.1,
+                    maxOutputTokens: Math.min(
+                        Number(options.maxOutputTokens) || 2048,
+                        config.outputPolicy.maxOutputTokensPerRequest
+                    ),
+                }, modelName);
+                const result = await model.generateContent(prompt);
+                const response = await result.response;
+                const text = response.text();
+                if (!String(text || '').trim()) {
+                    throw new Error(`O modelo ${modelName} retornou um fragmento visual vazio.`);
+                }
+                return text;
+            } catch (error) {
+                lastError = error;
+                apiStats.apiErrors++;
+                if (isAuthenticationError(error) || isPermissionError(error)) break;
+                logger.warn(`Falha ao gerar fragmento visual com ${modelName}: ${error.message}`);
+            }
+        }
+        if (isAuthenticationError(lastError)) {
+            throw new Error('Falha na autenticação ADC. Execute "gcloud auth application-default login".');
+        }
+        if (isPermissionError(lastError)) {
+            throw new Error('Acesso negado pelo Vertex AI. Verifique a API e as permissões IAM do projeto.');
+        }
+        throw lastError || new Error('Não foi possível gerar o fragmento visual.');
+    },
+
     async rewriteContent(content, prompt, options = {}) {
         try {
             if (!config.hasValidVertexConfig()) {
