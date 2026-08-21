@@ -41,6 +41,8 @@ const {
 const {
     writeDirectoryProcessingManifest,
     getReusableManifestEntries,
+    getRewrittenOutputPath,
+    writeUnchangedFileAtomic,
 } = require('./src/services/fileServiceMd');
 const { createRewriteCheckpoint } = require('./src/services/rewriteCheckpointService');
 const {
@@ -79,6 +81,15 @@ const compiledPlan = compileVisualGuide(guide, {
     guideId: 'auditoria-visual-v1',
     diversificationSeed: 'auditoria-piloto-v1',
 });
+const wrappedMarkerPlan = compileVisualGuide(
+    '@@ ### **Conceitos básicos**\n\nUsar uma tabela comparativa.',
+    { discipline: 'Contabilidade' }
+);
+assert.strictEqual(
+    wrappedMarkerPlan.topics[0].canonical_title,
+    'Conceitos básicos',
+    'Compilador deve aceitar o cabeçalho visual @@ ### usado nos mapas individuais'
+);
 assert.strictEqual(compiledPlan.topics.length, 3, 'Sumário não deve virar tópico de conteúdo');
 assert.strictEqual(compiledPlan.guide_sha256, sha256(guide), 'Hash deve representar o relatório literal');
 assert.strictEqual(compiledPlan.topics[0].source_index, '010', 'Índice explícito deve ser transportado');
@@ -594,8 +605,10 @@ try {
 const visualDirectoryRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'pygem-visual-directory-'));
 try {
     const guidesDirectory = path.join(visualDirectoryRoot, 'visuais');
+    const inputDirectory = path.join(visualDirectoryRoot, 'entrada');
     const outputDirectory = path.join(visualDirectoryRoot, 'saida');
     fs.mkdirSync(guidesDirectory, { recursive: true });
+    fs.mkdirSync(inputDirectory, { recursive: true });
     fs.writeFileSync(
         path.join(guidesDirectory, '001_conceitos-visual.md'),
         '### Conceitos básicos\n\n**Correção recomendada para Markdown:** usar uma tabela comparativa.',
@@ -617,16 +630,31 @@ try {
     });
     assert.strictEqual(directoryContext.inputType, 'guide-directory');
     assert.strictEqual(directoryContext.plansBySourceIndex.size, 2);
-    assert.doesNotThrow(() => validateVisualDirectoryPairing([
-        '001_contabilidade_geral_avancada_reescrito.md',
-        '002_contabilidade_geral_avancada_reescrito.md',
-    ], directoryContext));
-    assert.throws(
-        () => validateVisualDirectoryPairing([
-            '001_contabilidade_geral_avancada_reescrito.md',
+    const conceptsSource = path.join(inputDirectory, '001_contabilidade_geral_avancada_reescrito.md');
+    const patrimonySource = path.join(inputDirectory, '002_contabilidade_geral_avancada_reescrito.md');
+    const unmatchedSource = path.join(inputDirectory, '003_sem-visual_reescrito.md');
+    fs.writeFileSync(conceptsSource, '@@ Conceitos básicos', 'utf8');
+    fs.writeFileSync(patrimonySource, '@@ Patrimônio', 'utf8');
+    fs.writeFileSync(unmatchedSource, '@@ Sem visual', 'utf8');
+    assert.deepStrictEqual(validateVisualDirectoryPairing([
+        conceptsSource,
+        patrimonySource,
+    ], directoryContext), {
+        missingVisualIndexes: [],
+        unindexedSourceFiles: [],
+        unusedVisualIndexes: [],
+    });
+    assert.deepStrictEqual(
+        validateVisualDirectoryPairing([
+            conceptsSource,
+            unmatchedSource,
         ], directoryContext),
-        error => error.code === 'PYGEM_VISUAL_DIRECTORY_PAIRING_INVALID',
-        'Preflight deve rejeitar arquivo visual sem Markdown reescrito correspondente'
+        {
+            missingVisualIndexes: ['003'],
+            unindexedSourceFiles: [],
+            unusedVisualIndexes: ['002'],
+        },
+        'Preflight deve relatar ausências e excedentes sem bloquear o lote'
     );
     assert.deepStrictEqual(
         getVisualContextForFile(
@@ -637,14 +665,30 @@ try {
         ['conceitos-basicos'],
         'Arquivo reescrito deve receber todos os tópicos do arquivo visual com o mesmo índice'
     );
-    assert.throws(
-        () => getVisualContextForFile(
+    assert.strictEqual(
+        getVisualContextForFile(
             '003_sem-visual_reescrito.md',
             '@@ Sem visual',
             directoryContext
-        ),
-        error => error.code === 'PYGEM_VISUAL_FILE_NOT_MATCHED',
-        'Arquivo sem visual correspondente deve falhar antes da chamada ao modelo'
+        ).passthrough,
+        true,
+        'Arquivo sem visual correspondente deve seguir como cópia sem alterações'
+    );
+
+    const unchangedSource = unmatchedSource;
+    const unchangedBytes = Buffer.from([0xef, 0xbb, 0xbf, 0x40, 0x40, 0x20, 0x54, 0xc3, 0xad, 0x74, 0x75, 0x6c, 0x6f]);
+    fs.writeFileSync(unchangedSource, unchangedBytes);
+    const unchangedOutput = writeUnchangedFileAtomic(
+        outputDirectory,
+        inputDirectory,
+        unchangedSource
+    );
+    assert.strictEqual(path.basename(unchangedOutput), '003_sem-visual_reescrito.md');
+    assert.deepStrictEqual(fs.readFileSync(unchangedOutput), unchangedBytes);
+    assert.strictEqual(
+        path.basename(getRewrittenOutputPath(outputDirectory, inputDirectory, unchangedSource)),
+        '003_sem-visual_reescrito.md',
+        'Arquivo já reescrito não deve receber sufixo duplicado na saída'
     );
 
     const persistedPlans = writeVisualContextPlansAtomic(outputDirectory, directoryContext);

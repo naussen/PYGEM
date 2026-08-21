@@ -13,6 +13,7 @@ const {
     createOutputDirectory,
     readAllMdFilesInSubdirectories,
     writeRewrittenFileAtomic,
+    writeUnchangedFileAtomic,
     writeDirectoryProcessingManifest,
     getReusableManifestEntries,
 } = require('./services/fileServiceMd');
@@ -202,7 +203,21 @@ async function main() {
         const totalFiles = directoriesWithFiles.reduce((total, dir) => total + dir.files.length, 0);
         const totalDirs = directoriesWithFiles.length;
         const allFiles = directoriesWithFiles.flatMap(dir => dir.files);
-        validateVisualDirectoryPairing(allFiles, visualContext);
+        const visualPairing = validateVisualDirectoryPairing(allFiles, visualContext);
+        const filesWithoutVisualCount = visualPairing.missingVisualIndexes.length
+            + visualPairing.unindexedSourceFiles.length;
+        if (filesWithoutVisualCount > 0) {
+            const message = `${filesWithoutVisualCount} arquivo(s) sem mapa visual `
+                + 'serão copiados sem alterações.';
+            logger.warn(message);
+            console.log(`⚠️  ${message}`);
+        }
+        if (visualPairing.unusedVisualIndexes.length > 0) {
+            const message = `${visualPairing.unusedVisualIndexes.length} mapa(s) visual(is) sem `
+                + 'arquivo correspondente serão ignorados.';
+            logger.warn(message);
+            console.log(`⚠️  ${message}`);
+        }
         
         // Calcula estatísticas dos arquivos para otimização
         const fileSizes = allFiles.map(file => {
@@ -289,6 +304,24 @@ async function main() {
                 try {
                     const content = fs.readFileSync(file, 'utf-8');
                     const tokens = estimateTokens(content);
+                    const fileVisualContext = getVisualContextForFile(
+                        file,
+                        content,
+                        visualContext
+                    );
+                    if (fileVisualContext.passthrough) {
+                        return {
+                            path: file,
+                            name: path.basename(file),
+                            content,
+                            tokens,
+                            visualTopics: [],
+                            visualPlanHash: null,
+                            prompt,
+                            passthrough: true,
+                            readError: null,
+                        };
+                    }
                     if (!content.trim()) {
                         return {
                             path: file,
@@ -298,14 +331,10 @@ async function main() {
                             visualTopics: [],
                             visualPlanHash: visualContext?.planHash || null,
                             prompt,
+                            passthrough: false,
                             readError: 'Arquivo vazio',
                         };
                     }
-                    const fileVisualContext = getVisualContextForFile(
-                        file,
-                        content,
-                        visualContext
-                    );
                     const visualTopics = fileVisualContext.visualTopics;
                     return {
                         path: file,
@@ -317,6 +346,7 @@ async function main() {
                         prompt: visualTopics.length > 0
                             ? getRewritingPrompt({ visualTopics })
                             : prompt,
+                        passthrough: false,
                         readError: null,
                     };
                 } catch (error) {
@@ -325,11 +355,17 @@ async function main() {
                         name: path.basename(file),
                         content: '',
                         tokens: 0,
+                        passthrough: false,
                         readError: `Falha de leitura: ${error.message}`,
                     };
                 }
             });
-            const filesWithContent = inspectedFiles.filter(file => !file.readError);
+            const passthroughFiles = inspectedFiles.filter(file => (
+                !file.readError && file.passthrough
+            ));
+            const filesWithContent = inspectedFiles.filter(file => (
+                !file.readError && !file.passthrough
+            ));
 
             inspectedFiles.filter(file => file.readError).forEach(file => {
                 const errorMessage = `Erro ao processar ${file.name}: ${file.readError}`;
@@ -347,6 +383,33 @@ async function main() {
                     success: false,
                     errorMessage: file.readError,
                 });
+            });
+
+            passthroughFiles.forEach(file => {
+                try {
+                    const outputFilePath = writeUnchangedFileAtomic(
+                        outputDirectory,
+                        inputDirectory,
+                        file.path
+                    );
+                    dirSuccessfulEntries.push({ filePath: file.path, outputFilePath });
+                    successCount++;
+                    console.log(`    ↪️ Sem mapa visual; copiado sem alterações: ${outputFilePath}`);
+                    performanceLogger.recordFileProcessing({
+                        fileName: file.name,
+                        filePath: file.path,
+                        estimatedTokens: file.tokens,
+                        success: true,
+                        outputLength: Buffer.byteLength(file.content, 'utf8'),
+                    });
+                } catch (error) {
+                    const errorMessage = `Erro ao copiar ${file.name}: ${error.message}`;
+                    dirFailedEntries.push({ filePath: file.path, error: error.message });
+                    errorCount++;
+                    errors.push(errorMessage);
+                    logger.error(errorMessage);
+                    console.log(`    ❌ Erro: ${error.message}`);
+                }
             });
             
             const { smallFiles, largeFiles } = parallelService.groupFilesBySize(filesWithContent);

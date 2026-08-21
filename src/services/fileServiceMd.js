@@ -186,11 +186,46 @@ const getRelativePathInsideRoot = (rootDirectory, targetPath) => {
 const getRewrittenOutputPath = (outputDirectory, inputDirectory, originalFilePath) => {
     const relativeSourcePath = getRelativePathInsideRoot(inputDirectory, originalFilePath);
     const parsedPath = path.parse(relativeSourcePath);
+    const outputFileName = parsedPath.name.toLocaleLowerCase('pt-BR').endsWith('_reescrito')
+        ? parsedPath.base
+        : `${parsedPath.name}_reescrito.md`;
     return path.join(
         outputDirectory,
         parsedPath.dir,
-        `${parsedPath.name}_reescrito.md`
+        outputFileName
     );
+};
+
+/**
+ * Copia atomicamente um arquivo sem mapa visual, preservando bytes, nome e subpasta.
+ */
+const writeUnchangedFileAtomic = (
+    outputDirectory,
+    inputDirectory,
+    originalFilePath
+) => {
+    const outputFilePath = getRewrittenOutputPath(
+        outputDirectory,
+        inputDirectory,
+        originalFilePath
+    );
+    if (path.resolve(outputFilePath) === path.resolve(originalFilePath)) {
+        logger.info(`Arquivo sem mapa visual preservado no local original: ${originalFilePath}`);
+        return outputFilePath;
+    }
+
+    const outputParent = path.dirname(outputFilePath);
+    const temporaryOutputPath = `${outputFilePath}.${process.pid}.${Date.now()}.tmp`;
+    fs.mkdirSync(outputParent, { recursive: true });
+    try {
+        fs.copyFileSync(originalFilePath, temporaryOutputPath);
+        fs.renameSync(temporaryOutputPath, outputFilePath);
+    } finally {
+        if (fs.existsSync(temporaryOutputPath)) fs.unlinkSync(temporaryOutputPath);
+    }
+
+    logger.info(`Arquivo sem mapa visual copiado sem alterações: ${outputFilePath}`);
+    return outputFilePath;
 };
 
 /**
@@ -516,6 +551,7 @@ module.exports = {
     appendToSubdirectoryFile,
     getRewrittenOutputPath,
     writeRewrittenFileAtomic,
+    writeUnchangedFileAtomic,
     writeDirectoryProcessingManifest,
     getReusableManifestEntries,
     buildSubdirectoryAggregate,

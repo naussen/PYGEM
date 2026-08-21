@@ -81,10 +81,12 @@ Em um terminal interativo, o PYGEM pergunta pela pasta dos arquivos visuais.
 Pressione Enter para continuar sem contexto visual. Cada arquivo visual deve começar
 com o mesmo índice de três dígitos do arquivo reescrito correspondente. Por exemplo,
 `001_conceitos-visual.md` é lido em conjunto com
-`001_contabilidade_geral_avancada_reescrito.md`. Índices ausentes, duplicados ou sem
-correspondência interrompem o arquivo antes da chamada ao Vertex AI. Se a pasta visual
-estiver dentro do diretório de entrada, seus arquivos serão usados somente como
-instrução e não serão reescritos.
+`001_contabilidade_geral_avancada_reescrito.md`. Um Markdown sem mapa é copiado
+integralmente para a saída, sem chamada ao Vertex AI; um mapa sem Markdown gera apenas
+aviso e é ignorado. Índices duplicados continuam sendo rejeitados porque tornam o
+pareamento ambíguo. Se a pasta visual estiver dentro do diretório de entrada, seus
+arquivos serão usados somente como instrução e não serão reescritos. Arquivos de entrada
+que já terminam em `_reescrito.md` conservam o nome na saída, sem sufixo duplicado.
 
 Os arquivos originais são preservados, salvo quando uma opção explícita de substituição for escolhida pela aplicação.
 
@@ -150,6 +152,9 @@ modalidade, todos os arquivos `.md` diretamente contidos na pasta são compilado
 individualmente. Os planos normalizados são gravados em `_visual-plans` no diretório
 de saída. O pareamento pelo prefixo do nome é explícito: o PYGEM não tenta adivinhar
 correspondências pelo número do módulo ou pela ordem alfabética.
+
+Nos mapas individuais, o título pode usar tanto `### Título` quanto o formato editorial
+`@@ ### **Título**`.
 
 O PYGEM associa somente os tópicos pertinentes a cada arquivo por `source_index` explícito ou por título, inclusive quando o título de origem está fragmentado por OCR. Um plano ativo sem correspondência interrompe o arquivo antes da chamada ao modelo. Apenas os requisitos selecionados entram no prompt; o plano normalizado também é gravado como `_visual-plan.json` na saída. O hash do plano e os tópicos associados invalidam checkpoints e reaproveitamentos incompatíveis.
 

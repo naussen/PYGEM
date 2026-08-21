@@ -104,11 +104,11 @@ function promptForOptionalVisualGuide(options, question) {
     }
 
     const visualGuideDirectory = stripWrappingQuotes(question(
-        '🎨 Caminho da pasta dos arquivos visuais Markdown (opcional; Enter para ignorar): '
+        '[VISUAL] Caminho da pasta dos arquivos visuais Markdown (opcional; Enter para ignorar): '
     ));
     if (!visualGuideDirectory) return options;
 
-    const discipline = String(question('📚 Disciplina descrita nos arquivos visuais: ') || '').trim();
+    const discipline = String(question('[DISCIPLINA] Disciplina descrita nos arquivos visuais: ') || '').trim();
     if (!discipline) {
         throw makeVisualError(
             'PYGEM_VISUAL_DISCIPLINE_REQUIRED',
@@ -164,11 +164,20 @@ function loadVisualGuideDirectory(options) {
         }
 
         const loaded = readBoundedFile(guidePath, 'Arquivo visual');
-        const compiledPlan = compileVisualGuide(loaded.content, {
-            discipline: options.discipline,
-            guideId: options.guideId,
-            diversificationSeed: options.diversificationSeed,
-        });
+        let compiledPlan;
+        try {
+            compiledPlan = compileVisualGuide(loaded.content, {
+                discipline: options.discipline,
+                guideId: options.guideId,
+                diversificationSeed: options.diversificationSeed,
+            });
+        } catch (error) {
+            throw makeVisualError(
+                error.code || 'PYGEM_VISUAL_GUIDE_COMPILATION_FAILED',
+                `Falha ao compilar ${path.basename(guidePath)}: ${error.message}`,
+                { filePath: loaded.resolvedPath, cause: error.code || error.name }
+            );
+        }
         const plan = applyVisualVariants(compiledPlan);
         plansBySourceIndex.set(sourceIndex, {
             inputPath: loaded.resolvedPath,
@@ -256,34 +265,40 @@ function loadVisualContext(options) {
 
 function getVisualContextForFile(filePath, content, visualContext) {
     if (!visualContext) {
-        return { visualTopics: [], visualPlanHash: null, plan: null };
+        return { visualTopics: [], visualPlanHash: null, plan: null, passthrough: false };
     }
     if (visualContext.inputType !== 'guide-directory') {
         return {
             visualTopics: selectVisualTopicsForFile(filePath, content, visualContext.plan),
             visualPlanHash: visualContext.planHash,
             plan: visualContext.plan,
+            passthrough: false,
         };
     }
 
     const sourceIndex = extractFileIndex(filePath);
     if (!sourceIndex) {
-        throw makeVisualError(
-            'PYGEM_SOURCE_FILE_INDEX_REQUIRED',
-            `O arquivo reescrito deve começar com índice de três dígitos: ${path.basename(filePath)}`
-        );
+        return {
+            visualTopics: [],
+            visualPlanHash: null,
+            plan: null,
+            passthrough: true,
+        };
     }
     const matched = visualContext.plansBySourceIndex.get(sourceIndex);
     if (!matched) {
-        throw makeVisualError(
-            'PYGEM_VISUAL_FILE_NOT_MATCHED',
-            `Nenhum arquivo visual com índice ${sourceIndex} corresponde a ${path.basename(filePath)}.`
-        );
+        return {
+            visualTopics: [],
+            visualPlanHash: null,
+            plan: null,
+            passthrough: true,
+        };
     }
     return {
         visualTopics: matched.plan.topics,
         visualPlanHash: matched.planHash,
         plan: matched.plan,
+        passthrough: false,
     };
 }
 
@@ -299,16 +314,17 @@ function isVisualContextInputFile(filePath, visualContext) {
 }
 
 function validateVisualDirectoryPairing(filePaths, visualContext) {
-    if (!visualContext || visualContext.inputType !== 'guide-directory') return;
+    if (!visualContext || visualContext.inputType !== 'guide-directory') {
+        return { missingVisualIndexes: [], unindexedSourceFiles: [], unusedVisualIndexes: [] };
+    }
 
     const sourceFilesByIndex = new Map();
+    const unindexedSourceFiles = [];
     filePaths.forEach(filePath => {
         const sourceIndex = extractFileIndex(filePath);
         if (!sourceIndex) {
-            throw makeVisualError(
-                'PYGEM_SOURCE_FILE_INDEX_REQUIRED',
-                `O arquivo reescrito deve começar com índice de três dígitos: ${path.basename(filePath)}`
-            );
+            unindexedSourceFiles.push(filePath);
+            return;
         }
         if (sourceFilesByIndex.has(sourceIndex)) {
             throw makeVisualError(
@@ -324,19 +340,7 @@ function validateVisualDirectoryPairing(filePaths, visualContext) {
         .filter(sourceIndex => !visualContext.plansBySourceIndex.has(sourceIndex));
     const unusedVisualIndexes = [...visualContext.plansBySourceIndex.keys()]
         .filter(sourceIndex => !sourceFilesByIndex.has(sourceIndex));
-    if (missingVisualIndexes.length > 0 || unusedVisualIndexes.length > 0) {
-        const details = [];
-        if (missingVisualIndexes.length > 0) {
-            details.push(`sem visual: ${missingVisualIndexes.join(', ')}`);
-        }
-        if (unusedVisualIndexes.length > 0) {
-            details.push(`sem arquivo reescrito: ${unusedVisualIndexes.join(', ')}`);
-        }
-        throw makeVisualError(
-            'PYGEM_VISUAL_DIRECTORY_PAIRING_INVALID',
-            `Pareamento visual incompleto (${details.join('; ')}).`
-        );
-    }
+    return { missingVisualIndexes, unindexedSourceFiles, unusedVisualIndexes };
 }
 
 function compactForMatch(value) {

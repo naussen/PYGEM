@@ -69,7 +69,7 @@ function parseGuideSections(markdown) {
     let current = null;
 
     lines.forEach((line, lineIndex) => {
-        const heading = line.match(/^###(?!#)\s+(?:(\d+)\.\s*)?(.+?)\s*$/);
+        const heading = line.match(/^(?:@@@?\s+)?###(?!#)\s+(?:(\d+)\.\s*)?(.+?)\s*$/);
         if (heading) {
             if (current) sections.push(current);
             current = {

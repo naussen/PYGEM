@@ -4,7 +4,10 @@
 
 - troca o prompt interativo de guia único pela seleção opcional de uma pasta visual;
 - associa cada arquivo visual ao Markdown reescrito pelo prefixo numérico de três dígitos;
-- rejeita índices visuais ausentes, duplicados e arquivos reescritos sem visual correspondente;
+- copia sem alterações os arquivos reescritos sem mapa e ignora mapas excedentes com aviso;
+- rejeita somente índices duplicados, que não permitem associação segura;
+- aceita mapas individuais com cabeçalho `@@ ### **Título**`;
+- preserva nomes já terminados em `_reescrito.md`, sem duplicar o sufixo na saída;
 - mantém `--visual-guide` e `--visual-plan` para compatibilidade com automações existentes;
 - persiste os planos compilados individualmente em `_visual-plans` na pasta de saída.
 
