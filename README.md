@@ -201,8 +201,8 @@ As opções de linha de comando prevalecem sobre as variáveis de ambiente. `--v
 | `GOOGLE_CLOUD_PROJECT` | ID do projeto Google Cloud | obrigatória |
 | `GOOGLE_CLOUD_LOCATION` | Região do endpoint Vertex AI | `global` |
 | `GOOGLE_GENAI_API_VERSION` | Versão da API usada pelo SDK | `v1` |
-| `GEMINI_MODEL` | Modelo principal no Vertex AI; o `.env.example` recomenda 3.5 | `gemini-2.5-flash` quando ausente |
-| `GEMINI_FALLBACK_MODEL` | Modelo usado em caso de indisponibilidade; o `.env.example` recomenda 3.5 Lite | `gemini-2.5-flash-lite` quando ausente |
+| `GEMINI_MODEL` | Modelo principal no Vertex AI | `gemini-3.5-flash` |
+| `GEMINI_FALLBACK_MODEL` | Modelo usado em caso de indisponibilidade | `gemini-3.5-flash-lite` |
 | `GEMINI_RECOVERY_MODEL` | Recuperação final de fragmento mínimo após principal e fallback falharem | `gemini-3.5-flash` |
 | `GOOGLE_CLOUD_RECOVERY_LOCATION` | Endpoint separado do modelo de recuperação | `global` |
 | `INPUT_DIR` | Diretório de entrada opcional | solicitado na execução |
@@ -253,9 +253,9 @@ Além da sintaxe Mermaid e dos limites proporcionais de saída, o PYGEM valida a
 
 Uma resposta só é aceita quando o Vertex AI informa término natural `STOP`. Respostas `MAX_TOKENS`, `RECITATION`, `SAFETY` ou com outro motivo de interrupção nunca são publicadas parcialmente. Em `MAX_TOKENS`, expansão excessiva ou loop de repetição, o PYGEM tenta uma vez o modelo fallback com o mesmo teto e só então subdivide. Se um fragmento já estiver no tamanho mínimo e os dois modelos falharem, usa o modelo de recuperação 3.5 no endpoint `global`. O orçamento de saída nunca cresce, e o orçamento de chamadas é compartilhado entre o arquivo, o bloco raiz, fallbacks e subdivisões, impedindo multiplicação recursiva. Se a recuperação limitada não for suficiente, o bloco original é preservado apenas na montagem segura em memória, o arquivo é marcado como incompleto e os blocos válidos ficam no checkpoint. A cobertura dos títulos da fonte é conferida novamente no fluxo sequencial, paralelo e nos fallbacks.
 
-O perfil recomendado no `.env.example` para novas configurações usa `gemini-3.5-flash` com `thinkingLevel=MINIMAL`, adequado a uma transformação textual que não exige raciocínio agentivo longo, e `gemini-3.5-flash-lite` apenas como fallback de capacidade. Ambos são GA. O fallback interno, usado quando `GEMINI_MODEL` não está definido, permanece temporariamente em 2.5 para não combinar silenciosamente arquivos `.env` legados em `us-central1` com modelos 3.5 incompatíveis com essa região. O PYGEM adapta a configuração por família: Gemini 2.5 recebe `thinkingBudget`; Gemini 3 ou superior recebe `thinkingLevel`; no Flash-Lite 3.5, parâmetros de amostragem que o modelo não aceita são omitidos.
+O perfil padrão usa `gemini-3.5-flash` com `thinkingLevel=MINIMAL`, adequado a uma transformação textual que não exige raciocínio agentivo longo, e `gemini-3.5-flash-lite` apenas como fallback de capacidade. Ambos são GA. O PYGEM adapta a configuração por família: Gemini 2.5 recebe `thinkingBudget`; Gemini 3 ou superior recebe `thinkingLevel`; no Flash-Lite 3.5, parâmetros de amostragem que o modelo não aceita são omitidos.
 
-O `gemini-2.5-flash` permanece aceito quando configurado explicitamente, mas sua desativação está prevista para outubro de 2026. Para migrar, altere conjuntamente `GEMINI_MODEL`, `GEMINI_FALLBACK_MODEL` e `GOOGLE_CLOUD_LOCATION=global`; os modelos 3.5 não estão disponíveis em `us-central1`. Como o checkpoint inclui o modelo em seu hash, a primeira execução após a troca gera unidades novas e não mistura respostas de famílias diferentes.
+O `gemini-2.5-flash` permanece aceito quando configurado explicitamente durante a transição, mas entra em Extended Lifecycle Access em 20/10/2026. Para migrar uma configuração antiga, altere conjuntamente `GEMINI_MODEL`, `GEMINI_FALLBACK_MODEL` e `GOOGLE_CLOUD_LOCATION=global`. Como o checkpoint inclui o modelo em seu hash, a primeira execução após a troca gera unidades novas e não mistura respostas de famílias diferentes.
 
 O modo otimizado altera esperas e agrupamento, mas usa a mesma configuração determinística de geração do modo normal. Por segurança operacional, executa uma requisição por vez por padrão; `PYGEM_MAX_CONCURRENT_REQUESTS` permite aumento consciente quando a cota do projeto comportar concorrência.
 

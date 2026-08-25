@@ -1,5 +1,11 @@
 # Changelog
 
+## 2026-08-25 — migração dos padrões Vertex AI
+
+- substitui os fallbacks internos Gemini 2.5 por `gemini-3.5-flash` e `gemini-3.5-flash-lite`;
+- mantém modelos 2.5 apenas quando configurados explicitamente durante a transição;
+- documenta a entrada em Extended Lifecycle Access em 20/10/2026.
+
 ## 2026-08-21 — compatibilidade do retrofit visual
 
 - exclui as subpastas visual e de saída da varredura recursiva da entrada;

@@ -91,30 +91,37 @@ async function run() {
     const tinySource = '## Tema mínimo\n\nConteúdo integral de um fragmento pequeno.';
     const tinyModels = [];
     const tinyBudget = diagnostics.createRequestBudget('folha mínima simulada', 3);
-    const recoveredByModernModel = await diagnostics.rewriteBlockWithRecovery(
-        tinySource,
-        'Reescreva com fidelidade.',
-        'folha mínima simulada',
-        {
-            budget: tinyBudget,
-            workUnitId: 'leaf',
-            basePrompt: 'Reescreva com fidelidade.',
-            generationExecutor: async (_model, modelName, _overrides, _prompt, context) => {
-                context.budget.consume();
-                tinyModels.push(modelName);
-                return modelName === config.recoveryModel
-                    ? response(context.sourceContent)
-                    : response('Resposta truncada', 'MAX_TOKENS');
-            },
-        }
-    );
-    assert.strictEqual(recoveredByModernModel, tinySource);
-    assert.deepStrictEqual(tinyModels, [
-        config.model,
-        config.fallbackModel,
-        config.recoveryModel,
-    ]);
-    assert.strictEqual(tinyBudget.used, 3);
+    const defaultRecoveryModel = config.recoveryModel;
+    const recoveryModelFixture = 'gemini-recovery-fixture';
+    config.recoveryModel = recoveryModelFixture;
+    try {
+        const recoveredByModernModel = await diagnostics.rewriteBlockWithRecovery(
+            tinySource,
+            'Reescreva com fidelidade.',
+            'folha mínima simulada',
+            {
+                budget: tinyBudget,
+                workUnitId: 'leaf',
+                basePrompt: 'Reescreva com fidelidade.',
+                generationExecutor: async (_model, modelName, _overrides, _prompt, context) => {
+                    context.budget.consume();
+                    tinyModels.push(modelName);
+                    return modelName === recoveryModelFixture
+                        ? response(context.sourceContent)
+                        : response('Resposta truncada', 'MAX_TOKENS');
+                },
+            }
+        );
+        assert.strictEqual(recoveredByModernModel, tinySource);
+        assert.deepStrictEqual(tinyModels, [
+            config.model,
+            config.fallbackModel,
+            recoveryModelFixture,
+        ]);
+        assert.strictEqual(tinyBudget.used, 3);
+    } finally {
+        config.recoveryModel = defaultRecoveryModel;
+    }
 
     console.log('Testes simulados de recuperação e orçamento do PYGEM: OK');
 }

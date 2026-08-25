@@ -163,6 +163,8 @@ assert.deepStrictEqual(
 );
 assert.strictEqual(config.recoveryModel, 'gemini-3.5-flash');
 assert.strictEqual(config.recoveryLocation, 'global');
+assert.strictEqual(config.model, 'gemini-3.5-flash');
+assert.strictEqual(config.fallbackModel, 'gemini-3.5-flash-lite');
 assert.match(getRewritingPrompt(), /RECURSOS DIDÁTICOS \(USE COM CRITÉRIO\)/u);
 assert.match(getRewritingPrompt(), /capitalização editorial/u);
 assert.match(getRewritingPrompt(), /conclusão e fidelidade têm prioridade/u);

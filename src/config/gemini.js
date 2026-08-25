@@ -32,11 +32,10 @@ const config = {
     project,
     location,
     apiVersion: process.env.GOOGLE_GENAI_API_VERSION?.trim() || 'v1',
-    // O fallback interno permanece 2.5 para não combinar silenciosamente um
-    // .env legado em us-central1 com modelos 3.5, que não atendem essa região.
-    // Novas instalações recebem o perfil 3.5 explícito pelo .env.example.
-    model: process.env.GEMINI_MODEL?.trim() || 'gemini-2.5-flash',
-    fallbackModel: process.env.GEMINI_FALLBACK_MODEL?.trim() || 'gemini-2.5-flash-lite',
+    // O perfil interno acompanha o modelo GA recomendado. Configurações 2.5
+    // continuam aceitas somente quando declaradas explicitamente no ambiente.
+    model: process.env.GEMINI_MODEL?.trim() || 'gemini-3.5-flash',
+    fallbackModel: process.env.GEMINI_FALLBACK_MODEL?.trim() || 'gemini-3.5-flash-lite',
     recoveryModel: process.env.GEMINI_RECOVERY_MODEL?.trim() || 'gemini-3.5-flash',
     recoveryLocation: process.env.GOOGLE_CLOUD_RECOVERY_LOCATION?.trim() || 'global',
     generationConfig: {
