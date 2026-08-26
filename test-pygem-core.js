@@ -34,6 +34,20 @@ const {
 const { normalizeUppercaseHeadings } = require('./src/utils/contentProcessor');
 
 assert.strictEqual(isOutputTooShort('a'.repeat(100), 'a'.repeat(80), 0.75), false);
+assert.strictEqual(
+    geminiDiagnostics.shouldPreserveShortSourceAfterThinkingLeak(
+        'texto curto',
+        { code: 'PYGEM_OUTPUT_INVALID', details: { reason: 'thinking_leak' } }
+    ),
+    true
+);
+assert.strictEqual(
+    geminiDiagnostics.shouldPreserveShortSourceAfterThinkingLeak(
+        'texto curto',
+        { code: 'PYGEM_OUTPUT_INVALID', details: { reason: 'too_long' } }
+    ),
+    false
+);
 assert.strictEqual(isOutputTooShort('a'.repeat(1000), 'a'.repeat(350)), true);
 assert.strictEqual(isOutputTooShort('a'.repeat(1000), 'a'.repeat(650)), false);
 assert.strictEqual(isOutputTooLong('a'.repeat(100), 'a'.repeat(301), 3), true);

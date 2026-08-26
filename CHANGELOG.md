@@ -1,5 +1,9 @@
 # Changelog
 
+## 2026-08-26 — fallback para conteúdo curto
+
+- preserva a fonte quando um conteúdo de até 200 tokens é rejeitado por `thinking_leak`, evitando publicação parcial ou falha de lote.
+
 ## 2026-08-25 — migração dos padrões Vertex AI
 
 - substitui os fallbacks internos Gemini 2.5 por `gemini-3.5-flash` e `gemini-3.5-flash-lite`;

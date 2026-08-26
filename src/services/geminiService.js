@@ -60,6 +60,14 @@ const GENERATION_FAILURE = Object.freeze({
     REPETITION_LOOP: 'repetition_loop',
 });
 
+const SHORT_CONTENT_PASSTHROUGH_TOKEN_LIMIT = 200;
+
+function shouldPreserveShortSourceAfterThinkingLeak(content, error) {
+    return error?.code === 'PYGEM_OUTPUT_INVALID'
+        && error?.details?.reason === GENERATION_FAILURE.THINKING_LEAK
+        && estimateTokens(content) <= SHORT_CONTENT_PASSTHROUGH_TOKEN_LIMIT;
+}
+
 function createRequestBudget(label, maximum = config.retry.maxApiCallsPerRootBlock, parentBudget = null) {
     let used = 0;
     return {
@@ -759,6 +767,7 @@ async function rewriteBlockWithRecovery(block, prompt, label, options = {}) {
     try {
         return await generateValidatedRewrite(block, prompt, {
             label,
+            maxAttempts: options.maxAttempts,
             minOutputRatio,
             budget: options.budget,
             workUnitId,
@@ -768,6 +777,13 @@ async function rewriteBlockWithRecovery(block, prompt, label, options = {}) {
             visualTopics: depth === 0 ? options.visualTopics : [],
         });
     } catch (error) {
+        if (shouldPreserveShortSourceAfterThinkingLeak(block, error)) {
+            logger.warn(
+                `Bloco curto preservado apÃ³s rejeiÃ§Ã£o thinking_leak `
+                + `(atÃ© ${SHORT_CONTENT_PASSTHROUGH_TOKEN_LIMIT} tokens).`
+            );
+            return block;
+        }
         const fragments = getRecoverySubdivision(block, error, depth);
         if (!fragments) {
             const recoveryReasons = new Set([
@@ -904,11 +920,19 @@ const geminiService = {
             return await rewriteBlockWithRecovery(content, prompt, 'conteúdo', {
                 budget,
                 workUnitId: 'single',
+                maxAttempts: estimateTokens(content) <= SHORT_CONTENT_PASSTHROUGH_TOKEN_LIMIT ? 1 : undefined,
                 minOutputRatio: 0.75,
                 basePrompt: prompt,
                 visualTopics: options.visualTopics,
             });
         } catch (error) {
+            if (shouldPreserveShortSourceAfterThinkingLeak(content, error)) {
+                logger.warn(
+                    `Conteúdo curto preservado após rejeição thinking_leak `
+                    + `(até ${SHORT_CONTENT_PASSTHROUGH_TOKEN_LIMIT} tokens).`
+                );
+                return content;
+            }
             logger.error(`Falha no fluxo de reescrita: ${error.message}`);
             if (isAuthenticationError(error)) {
                 throw new Error('Falha na autenticação ADC. Execute "gcloud auth application-default login" ou configure uma identidade de serviço segura.');
@@ -1415,6 +1439,7 @@ const geminiService = {
         createPartialRewriteError,
         generateValidatedRewrite,
         rewriteBlockWithRecovery,
+        shouldPreserveShortSourceAfterThinkingLeak,
     },
     shouldRewriteInBlocks,
 };
