@@ -1,5 +1,9 @@
 # Changelog
 
+## 2026-08-27 — fórmulas KaTeX no Markdown
+
+- orienta fórmulas quantitativas para a sintaxe KaTeX, preservando expressões e variáveis sem usar blocos de código.
+
 ## 2026-08-27 — Markdown compatível com o leitor do site
 
 - orienta a reescrita a não gerar tags HTML, inclusive `<br>`, no Markdown final.

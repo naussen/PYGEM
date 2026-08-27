@@ -123,7 +123,7 @@ Enriqueça o material com recursos visuais e pedagógicos somente quando eles ag
 - Use *texto* para itálico
 - Use listas numeradas ou com marcadores
 - Não use tags HTML no Markdown (inclusive <br>); use apenas a sintaxe Markdown compatível com o site.
-- Use blocos de código para fórmulas quando necessário
+- Para fórmulas, use '$...$' em linha ou '$$...$$' em bloco, com sintaxe KaTeX; não use blocos de código. Preserve a expressão original e defina cada variável no texto adjacente. Em valores monetários, escreva 'R\\$ 1.250,00'.
 - Use blocos Mermaid (\`\`\`mermaid) para gráficos, mapas mentais e esquemas
 - Use > para chamadas de atenção e destaques importantes
 
