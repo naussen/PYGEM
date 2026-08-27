@@ -1,5 +1,9 @@
 # Changelog
 
+## 2026-08-27 — Markdown compatível com o leitor do site
+
+- orienta a reescrita a não gerar tags HTML, inclusive `<br>`, no Markdown final.
+
 ## 2026-08-26 — fallback para conteúdo curto
 
 - preserva a fonte quando um conteúdo de até 200 tokens é rejeitado por `thinking_leak`, evitando publicação parcial ou falha de lote.
