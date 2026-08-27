@@ -87,8 +87,6 @@ Enriqueça o material com recursos visuais e pedagógicos somente quando eles ag
 - Estruture com títulos e subtítulos Markdown
 - Preserve a hierarquia: use ## somente para tópicos principais do sumário, ### para subtópicos e #### ou níveis inferiores para subdivisões. Não promova subtópicos a tópicos principais.
 - Mantenha o sumario somente para referencia. 
-- IMPORTANTE! Ao reescrever um topico que esteja previsto no SUMARIO original, SEMPRE adicionar na linha anterior ao tituloos caracteres "@@@"
-- O numero de ocorrencias dos caracteres "@@@" que demarcam inicio de um topico DEVE ser necessariamente IGUAL ao numero de topicos previstos no SUMARIO.
 - Use negrito para termos importantes
 - Crie listas para enumerações
 
@@ -103,7 +101,6 @@ Enriqueça o material com recursos visuais e pedagógicos somente quando eles ag
 - Entregue EXCLUSIVAMENTE o markdown reescrito em português — nada mais
 - Nome de site ou autor ou de direitos reservados
 - QUESTOES DE CONCURSO que estejam no material original
-- Marcação de topicos com "@@@" que nao estejam literalmente previstos no sumario
 
 ### ❌ O QUE NÃO FAZER
 - NÃO adicione conteúdo de outras disciplinas
@@ -114,10 +111,9 @@ Enriqueça o material com recursos visuais e pedagógicos somente quando eles ag
 - NÃO mencione "material original" ou "texto-base"
 - NÃO numere módulos ou seções (evite "MÓDULO 1", "MÓDULO 2", etc.)
 - NÃO crie índice de siglas ou glossário de abreviações
-- NAO crie novos topicos com "@@@" que nao estejam no sumario
 
 ### 📝 FORMATAÇÃO MARKDOWN
-- Use ## para títulos principais (estes sao os titulos do sumario; adicionar tambem os caracteres "@@@" na LINHA ANTERIOR ao titulo! 
+- Use ## para títulos principais previstos no sumário, sem marcadores técnicos antes do título
 - Use ### para subtítulos
 - Use **texto** para negrito
 - Use *texto* para itálico

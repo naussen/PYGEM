@@ -274,6 +274,12 @@ function validateMarkdownQuality(markdown, options = {}) {
         // Definições base64 são separadas antes da IA e restauradas intactas no
         // final; não devem ser confundidas com linha Markdown patológica.
         if (IMAGE_DEFINITION_PATTERN.test(line.trim())) return;
+        if (/^@@@?\b/.test(line.trim()) || /^(?:unidade|m[oó]dulo)\s+\d+\b/i.test(line.trim())) {
+            issues.push(`linha ${lineNumber}: contém marcador técnico ou delimitador de corte proibido.`);
+        }
+        if (!/^\s*(?:```mermaid|```|graph\s|flowchart\s|mindmap\b)/i.test(line) && /<br\s*\/?\s*>/i.test(line)) {
+            issues.push(`linha ${lineNumber}: contém HTML <br> fora de Mermaid.`);
+        }
         if (line.length > MAX_MARKDOWN_LINE_LENGTH) {
             issues.push(
                 `linha ${lineNumber}: possui ${line.length} caracteres; limite seguro ${MAX_MARKDOWN_LINE_LENGTH}.`

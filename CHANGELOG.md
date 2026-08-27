@@ -1,5 +1,9 @@
 # Changelog
 
+## 2026-08-27 — bloqueio de artefatos de corte
+
+- remove a geração obrigatória de marcadores `@@@` e rejeita marcadores técnicos e `<br>` fora de Mermaid na saída.
+
 ## 2026-08-27 — fórmulas KaTeX no Markdown
 
 - orienta fórmulas quantitativas para a sintaxe KaTeX, preservando expressões e variáveis sem usar blocos de código.
