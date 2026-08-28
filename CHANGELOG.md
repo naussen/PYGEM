@@ -1,5 +1,10 @@
 # Changelog
 
+## 2026-08-28 — recuperação explícita de quebras HTML inválidas
+
+- instrui a nova tentativa a substituir `<br>` e `<br/>` por quebras Markdown, mantendo a rejeição estrutural de HTML fora de Mermaid;
+- adiciona teste de regressão para a instrução corretiva.
+
 ## 2026-08-27 — rejeição antecipada de HTML no retrofit visual
 
 - rejeita `<br>` e demais tags HTML já na validação do fragmento visual, evitando falha tardia na publicação;

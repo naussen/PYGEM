@@ -462,7 +462,12 @@ function getRetryInstruction(failure) {
         case GENERATION_FAILURE.THINKING_LEAK:
             return 'Entregue exclusivamente o Markdown final, sem planejamento, análise interna ou comentários sobre o processo de reescrita.';
         case GENERATION_FAILURE.INVALID_STRUCTURE:
-            return `A tentativa anterior apresentou estrutura Markdown inválida. Corrija especificamente: ${failure.details}`;
+            return [
+                'A tentativa anterior apresentou estrutura Markdown inválida.',
+                `Corrija especificamente: ${failure.details}`,
+                'Não use HTML. Em especial, substitua cada <br> ou <br/> por uma quebra de linha Markdown ou por linhas separadas em listas e tabelas.',
+                'Antes de responder, verifique que nenhum <br>, <br/> ou outra tag HTML permaneceu fora de um bloco Mermaid.',
+            ].join(' ');
         default:
             return '';
     }

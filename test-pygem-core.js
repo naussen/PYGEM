@@ -428,6 +428,13 @@ assert.match(
     ),
     /CORREÇÃO DA NOVA TENTATIVA[\s\S]*título duplicado/u
 );
+assert.match(
+    geminiDiagnostics.getRetryInstruction({
+        reason: geminiDiagnostics.GENERATION_FAILURE.INVALID_STRUCTURE,
+        details: 'linha 3: contém HTML <br> fora de Mermaid.',
+    }),
+    /substitua cada <br> ou <br\/> por uma quebra de linha Markdown/u
+);
 assert.strictEqual(
     geminiDiagnostics.shouldRewriteInBlocks(config.processing.singlePassMaxInputTokens),
     false
