@@ -320,6 +320,10 @@ assert.strictEqual(
     false
 );
 assert.strictEqual(
+    validateMarkdownQuality('@@ Marcador de corte\n\nConteúdo.').valid,
+    false
+);
+assert.strictEqual(
     validateMarkdownQuality(
         '## Administração pública\n\n### Princípios\n\nConteúdo.'
     ).valid,
