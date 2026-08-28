@@ -508,6 +508,24 @@ function buildAttemptPrompt(prompt, content, lastFailure) {
     ].filter(Boolean).join('\n\n');
 }
 
+function replaceLineBreakTagsOutsideMermaid(markdown) {
+    let insideMermaid = false;
+    return String(markdown || '').split(/\r?\n/).map(line => {
+        if (/^\s*```mermaid\s*$/i.test(line)) {
+            insideMermaid = true;
+            return line;
+        }
+        if (insideMermaid && /^\s*```\s*$/.test(line)) {
+            insideMermaid = false;
+            return line;
+        }
+        if (insideMermaid || !/<br\s*\/?\s*>/i.test(line)) return line;
+        return line.includes('|')
+            ? line.replace(/<br\s*\/?\s*>/gi, '; ')
+            : line.replace(/\s*<br\s*\/?\s*>\s*/gi, '\n');
+    }).join('\n');
+}
+
 function shouldRewriteInBlocks(contentOrTokens) {
     const tokens = typeof contentOrTokens === 'number'
         ? contentOrTokens
@@ -691,20 +709,29 @@ async function generateValidatedRewrite(content, prompt, options = {}) {
             const outputValidation = validateGeneratedContent(normalizedAccumulated, {
                 sourceMarkdown: content,
             });
-            const headingCoverage = validateSourceHeadingCoverage(content, normalizedAccumulated);
+            const repairedAccumulated = outputValidation.issues.length > 0
+                ? replaceLineBreakTagsOutsideMermaid(normalizedAccumulated)
+                : normalizedAccumulated;
+            const repairedValidation = repairedAccumulated === normalizedAccumulated
+                ? outputValidation
+                : validateGeneratedContent(repairedAccumulated, { sourceMarkdown: content });
+            const headingCoverage = validateSourceHeadingCoverage(content, repairedAccumulated);
             const visualCompliance = options.visualTopics?.length > 0
-                ? validateVisualCompliance(normalizedAccumulated, { visualTopics: options.visualTopics })
+                ? validateVisualCompliance(repairedAccumulated, { visualTopics: options.visualTopics })
                 : { valid: true, issues: [] };
-            if (outputValidation.valid && headingCoverage.valid && visualCompliance.valid) {
-                logger.info(`${label} reescrito com sucesso (${normalizedAccumulated.length} caracteres)`);
-                return normalizedAccumulated;
+            if (repairedValidation.valid && headingCoverage.valid && visualCompliance.valid) {
+                if (repairedAccumulated !== normalizedAccumulated) {
+                    logger.warn(`${label} continha <br> fora de Mermaid; a resposta rejeitada foi recuperada sem HTML.`);
+                }
+                logger.info(`${label} reescrito com sucesso (${repairedAccumulated.length} caracteres)`);
+                return repairedAccumulated;
             }
 
             lastFailure = {
                 reason: GENERATION_FAILURE.INVALID_STRUCTURE,
                 attempt,
                 details: [
-                    ...outputValidation.issues,
+                    ...repairedValidation.issues,
                     ...headingCoverage.issues,
                     ...visualCompliance.issues.map(issue => issue.message),
                 ].join(' '),
@@ -1438,6 +1465,7 @@ const geminiService = {
         getRetryInstruction,
         getContentScaleInstruction,
         buildAttemptPrompt,
+        replaceLineBreakTagsOutsideMermaid,
         shouldRewriteInBlocks,
         getRecoverySubdivision,
         createRequestBudget,

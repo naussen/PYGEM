@@ -436,6 +436,14 @@ assert.match(
     /substitua cada <br> ou <br\/> por uma quebra de linha Markdown/u
 );
 assert.strictEqual(
+    geminiDiagnostics.replaceLineBreakTagsOutsideMermaid('Texto<br/>seguinte\n```mermaid\ngraph TD\nA[Um<br/>Dois] --> B\n```'),
+    'Texto\nseguinte\n```mermaid\ngraph TD\nA[Um<br/>Dois] --> B\n```'
+);
+assert.strictEqual(
+    geminiDiagnostics.replaceLineBreakTagsOutsideMermaid('| Regra | Exemplo<br/>Complemento |'),
+    '| Regra | Exemplo; Complemento |'
+);
+assert.strictEqual(
     geminiDiagnostics.shouldRewriteInBlocks(config.processing.singlePassMaxInputTokens),
     false
 );
