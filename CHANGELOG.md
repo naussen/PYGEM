@@ -1,5 +1,9 @@
 # Changelog
 
+## 2026-08-28 — origem obrigatória de flashcards
+
+- impede a criação de flashcards sem questão identificada das bancas CESPE/CEBRASPE, FCC ou FGV, com metadados verificáveis e situação não anulada.
+
 ## 2026-08-28 — recuperação explícita de quebras HTML inválidas
 
 - instrui a nova tentativa a substituir `<br>` e `<br/>` por quebras Markdown, mantendo a rejeição estrutural de HTML fora de Mermaid;
