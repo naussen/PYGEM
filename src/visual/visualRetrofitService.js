@@ -155,8 +155,7 @@ function validateVisualFragment(fragment, requirement, sourceMarkdown) {
     if (/^\s*(?:#{1,6}|@@@?)\s+/m.test(fragment)) {
         throw new Error('Fragmento visual tentou criar ou alterar títulos.');
     }
-    const withoutAllowedBreak = fragment.replace(/<br\s*\/?\s*>/gi, '');
-    if (/<[^>]+>|\bon\w+\s*=|javascript:|vbscript:|data:/i.test(withoutAllowedBreak)) {
+    if (/<[^>]+>|\bon\w+\s*=|javascript:|vbscript:|data:/i.test(fragment)) {
         throw new Error('Fragmento visual contém HTML, atributo ou protocolo proibido.');
     }
     const detected = detectVisualResources(fragment);

@@ -1,5 +1,10 @@
 # Changelog
 
+## 2026-08-27 — rejeição antecipada de HTML no retrofit visual
+
+- rejeita `<br>` e demais tags HTML já na validação do fragmento visual, evitando falha tardia na publicação;
+- adiciona teste de regressão para `<br>` em tabela gerada pelo retrofit.
+
 ## 2026-08-27 — bloqueio de artefatos de corte
 
 - remove a geração obrigatória de marcadores `@@@` e rejeita marcadores técnicos e `<br>` fora de Mermaid na saída.

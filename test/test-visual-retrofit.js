@@ -115,6 +115,15 @@ assert.throws(
 );
 assert.throws(
     () => validateVisualFragment(
+        '| A | B |\n| --- | --- |\n| Linha 1<br>Linha 2 | Texto |',
+        tableRequirement,
+        'Linha 1 Linha 2 Texto'
+    ),
+    /HTML/u,
+    'Fragmentos com <br> fora de Mermaid devem ser rejeitados'
+);
+assert.throws(
+    () => validateVisualFragment(
         '| Regra | Prazo |\n| --- | --- |\n| Revisão | 99 dias |',
         tableRequirement,
         'A revisão possui prazo definido na fonte oficial.',
