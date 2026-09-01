@@ -112,6 +112,8 @@ function normalizeInlineTopicMarkers(content) {
 
 function stripStandaloneTechnicalMarkers(content) {
     return String(content || '')
+        .replace(/^[ \t]*@@@?[ \t]+(##(?!#)[ \t]+.+)$/gm, '$1')
+        .replace(/^[ \t]*@@@?[ \t]+(.+)$/gm, '# $1')
         .replace(/^[ \t]*@@@[ \t]*(?:\r?\n|$)/gm, '')
         .replace(/\n{3,}/g, '\n\n')
         .trim();

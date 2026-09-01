@@ -84,6 +84,10 @@ assert.strictEqual(
     stripStandaloneTechnicalMarkers('@@@\n## Empresa e Empresário\n\nTexto.'),
     '## Empresa e Empresário\n\nTexto.'
 );
+assert.strictEqual(
+    stripStandaloneTechnicalMarkers('@@ Direito de Empresa\n\nTexto.'),
+    '# Direito de Empresa\n\nTexto.'
+);
 const markdownTitleSource = '# Direito de Empresa\n\n## Empresa e Empresário\n\nTexto.';
 assert.strictEqual(
     finalizeRewrittenContent(
