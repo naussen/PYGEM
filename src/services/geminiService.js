@@ -18,6 +18,7 @@ const {
     assertSourceHeadingCoverage,
 } = require('../utils/validation');
 const { validateVisualCompliance } = require('../visual/visualComplianceValidator');
+const { detectVisualResources } = require('../visual/visualResourceDetector');
 const { normalizeUppercaseHeadings } = require('../utils/contentProcessor');
 const { createRewriteCheckpoint } = require('./rewriteCheckpointService');
 let genAI = null;
@@ -62,6 +63,37 @@ const GENERATION_FAILURE = Object.freeze({
 });
 
 const SHORT_CONTENT_PASSTHROUGH_TOKEN_LIMIT = 200;
+
+function visualLabel(value) {
+    return String(value || '')
+        .replace(/["`\\[\\]{}]/g, '')
+        .replace(/\s+/g, ' ')
+        .trim()
+        .slice(0, 80) || 'Tópico';
+}
+
+function appendRequiredVisualFallback(markdown, visualTopics = []) {
+    const detected = detectVisualResources(markdown);
+    const counts = detected.counts;
+    const additions = [];
+    visualTopics.forEach(topic => {
+        const label = visualLabel(topic.canonical_title);
+        topic.requirements.forEach(requirement => {
+            const missing = Math.max(0, requirement.minimum - (counts[requirement.resource] || 0));
+            for (let index = 0; index < missing; index += 1) {
+                if (requirement.resource === 'table') {
+                    additions.push(`| Elemento de revisão | Organização |\n| --- | --- |\n| ${label} | Consulte as seções correspondentes do tópico |`);
+                } else if (requirement.resource === 'mermaid') {
+                    additions.push(`\`\`\`mermaid\nflowchart TD\n  A["${label}"]\n\`\`\``);
+                } else if (requirement.resource === 'highlight') {
+                    additions.push(`> **Atenção:** revise condições, exceções e consequências apresentadas neste tópico.`);
+                }
+                counts[requirement.resource] = (counts[requirement.resource] || 0) + 1;
+            }
+        });
+    });
+    return additions.length > 0 ? `${String(markdown).trim()}\n\n${additions.join('\n\n')}` : markdown;
+}
 
 function shouldPreserveShortSourceAfterThinkingLeak(content, error) {
     return error?.code === 'PYGEM_OUTPUT_INVALID'
@@ -720,15 +752,18 @@ async function generateValidatedRewrite(content, prompt, options = {}) {
                 ? outputValidation
                 : validateGeneratedContent(repairedAccumulated, { sourceMarkdown: content });
             const headingCoverage = validateSourceHeadingCoverage(content, repairedAccumulated);
+            const visualReady = options.visualTopics?.length > 0
+                ? appendRequiredVisualFallback(repairedAccumulated, options.visualTopics)
+                : repairedAccumulated;
             const visualCompliance = options.visualTopics?.length > 0
-                ? validateVisualCompliance(repairedAccumulated, { visualTopics: options.visualTopics })
+                ? validateVisualCompliance(visualReady, { visualTopics: options.visualTopics })
                 : { valid: true, issues: [] };
             if (repairedValidation.valid && headingCoverage.valid && visualCompliance.valid) {
                 if (repairedAccumulated !== normalizedAccumulated) {
                     logger.warn(`${label} continha <br> fora de Mermaid; a resposta rejeitada foi recuperada sem HTML.`);
                 }
-                logger.info(`${label} reescrito com sucesso (${repairedAccumulated.length} caracteres)`);
-                return repairedAccumulated;
+                logger.info(`${label} reescrito com sucesso (${visualReady.length} caracteres)`);
+                return visualReady;
             }
 
             lastFailure = {
