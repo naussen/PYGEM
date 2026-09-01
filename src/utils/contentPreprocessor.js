@@ -137,6 +137,7 @@ function finalizeRewrittenContent(rewritten, prepared) {
         .split(/\r?\n/)
         .filter((line, index) => index === 0 || !/^(?:@@@|#\s+(?:unidade\s+\d+(?:\s+de\s+\d+)?|título))\s*$/i.test(line.trim()))
         .join('\n')
+        .replace(/^#\s+unidade\s+\d+(?:\s+de\s+\d+)?\s*:\s*(.+)$/gmi, '## $1')
         .replace(/^(#{1,6}\s+)@@@?\s*/gm, '$1');
     const titlePreserved = restoreOriginalDocumentTitle(
         normalized,
