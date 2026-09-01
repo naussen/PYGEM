@@ -95,6 +95,28 @@ function appendRequiredVisualFallback(markdown, visualTopics = []) {
     return additions.length > 0 ? `${String(markdown).trim()}\n\n${additions.join('\n\n')}` : markdown;
 }
 
+function trimExcessVisualResources(markdown, visualTopics = []) {
+    const limits = new Map();
+    visualTopics.forEach(topic => topic.requirements.forEach(requirement => {
+        const current = limits.get(requirement.resource);
+        limits.set(requirement.resource, current == null ? requirement.maximum : Math.min(current, requirement.maximum));
+    }));
+    const detected = detectVisualResources(markdown);
+    const removals = [];
+    limits.forEach((maximum, resource) => {
+        detected.resources
+            .filter(item => item.resource === resource)
+            .slice(maximum)
+            .forEach(item => removals.push(item));
+    });
+    if (removals.length === 0) return markdown;
+    const lines = String(markdown).split(/\r?\n/);
+    removals.sort((left, right) => right.line - left.line).forEach(item => {
+        lines.splice(item.line - 1, item.endLine - item.line + 1);
+    });
+    return lines.join('\n').replace(/\n{3,}/g, '\n\n').trim();
+}
+
 function shouldPreserveShortSourceAfterThinkingLeak(content, error) {
     return error?.code === 'PYGEM_OUTPUT_INVALID'
         && error?.details?.reason === GENERATION_FAILURE.THINKING_LEAK
@@ -753,7 +775,10 @@ async function generateValidatedRewrite(content, prompt, options = {}) {
                 : validateGeneratedContent(repairedAccumulated, { sourceMarkdown: content });
             const headingCoverage = validateSourceHeadingCoverage(content, repairedAccumulated);
             const visualReady = options.visualTopics?.length > 0
-                ? appendRequiredVisualFallback(repairedAccumulated, options.visualTopics)
+                ? appendRequiredVisualFallback(
+                    trimExcessVisualResources(repairedAccumulated, options.visualTopics),
+                    options.visualTopics
+                )
                 : repairedAccumulated;
             const visualCompliance = options.visualTopics?.length > 0
                 ? validateVisualCompliance(visualReady, { visualTopics: options.visualTopics })
@@ -1159,7 +1184,10 @@ const geminiService = {
             assertSourceHeadingCoverage(content, finalContent);
 
             const visualReadyContent = options.visualTopics?.length > 0
-                ? appendRequiredVisualFallback(finalContent, options.visualTopics)
+                ? appendRequiredVisualFallback(
+                    trimExcessVisualResources(finalContent, options.visualTopics),
+                    options.visualTopics
+                )
                 : finalContent;
             if (options.visualTopics?.length > 0) {
                 const compliance = validateVisualCompliance(visualReadyContent, {
