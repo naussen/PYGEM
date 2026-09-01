@@ -31,6 +31,7 @@ function stripMarkdown(value) {
 function canonicalizeTitle(value) {
     const cleaned = stripMarkdown(value)
         .replace(/^\d+\.\s*/, '')
+        .replace(/\s*\[\s*arquivo\s*:\s*\d{3}\s*\]\s*$/i, '')
         .replace(/\s+/g, ' ')
         .trim();
     if (!cleaned) return '';

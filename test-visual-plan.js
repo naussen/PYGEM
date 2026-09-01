@@ -90,6 +90,11 @@ assert.strictEqual(
     'Conceitos básicos',
     'Compilador deve aceitar o cabeçalho visual @@ ### usado nos mapas individuais'
 );
+assert.strictEqual(
+    canonicalizeTitle('Direito de empresa [arquivo: 001]'),
+    'Direito de empresa',
+    'Metadado físico de arquivo não pode integrar o título canônico'
+);
 assert.strictEqual(compiledPlan.topics.length, 3, 'Sumário não deve virar tópico de conteúdo');
 assert.strictEqual(compiledPlan.guide_sha256, sha256(guide), 'Hash deve representar o relatório literal');
 assert.strictEqual(compiledPlan.topics[0].source_index, '010', 'Índice explícito deve ser transportado');
