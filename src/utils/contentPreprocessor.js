@@ -4,6 +4,12 @@
 
 const IMAGE_DEF_PATTERN = /^(\[image[^\]]*\]:\s*<data:image\/[^>]+>\s*)$/gm;
 const DOCUMENT_TITLE_PATTERN = /^@@@?[ \t]+(?!#)(\S.*?)[ \t]*$/;
+const MARKDOWN_DOCUMENT_TITLE_PATTERN = /^#(?!#)[ \t]+\S.*?\s*$/;
+
+function isDocumentTitleLine(line) {
+    const trimmed = String(line || '').trim();
+    return DOCUMENT_TITLE_PATTERN.test(trimmed) || MARKDOWN_DOCUMENT_TITLE_PATTERN.test(trimmed);
+}
 
 // Títulos editoriais da série Auditoria. O PYGEM preserva o nome do arquivo,
 // mas deve corrigir o metadado @@ quando a fonte vier com espaços inseridos
@@ -42,7 +48,7 @@ function extractOriginalDocumentTitleLine(content) {
         .split(/\r?\n/)
         .find(line => line.trim());
 
-    if (!firstContentLine || !DOCUMENT_TITLE_PATTERN.test(firstContentLine.trim())) return null;
+    if (!firstContentLine || !isDocumentTitleLine(firstContentLine)) return null;
     return firstContentLine.trim();
 }
 
@@ -54,7 +60,7 @@ function restoreOriginalDocumentTitle(content, originalTitleLine) {
     const firstContentLineIndex = lines.findIndex(line => line.trim());
     if (
         firstContentLineIndex >= 0
-        && DOCUMENT_TITLE_PATTERN.test(lines[firstContentLineIndex].trim())
+        && isDocumentTitleLine(lines[firstContentLineIndex])
     ) {
         lines[firstContentLineIndex] = originalTitleLine;
         return lines.join('\n').trim();

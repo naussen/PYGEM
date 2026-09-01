@@ -79,6 +79,14 @@ assert.strictEqual(
     ),
     '@@ Título desformatado\n\nTexto.'
 );
+const markdownTitleSource = '# Direito de Empresa\n\n## Empresa e Empresário\n\nTexto.';
+assert.strictEqual(
+    finalizeRewrittenContent(
+        '@@ Direito de Empresa\n\n## Empresa e Empresário\n\nTexto reescrito.',
+        prepareContentForRewrite(markdownTitleSource)
+    ),
+    '# Direito de Empresa\n\n## Empresa e Empresário\n\nTexto reescrito.'
+);
 const sourceWithImmutableTitle = `${originalDocumentTitle}\n\n## Seção ORIGINAL\n\nTexto.`;
 const preparedWithImmutableTitle = prepareContentForRewrite(sourceWithImmutableTitle);
 assert.strictEqual(

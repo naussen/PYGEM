@@ -59,6 +59,7 @@ Você é um especialista em reescrita didática. Sua tarefa é reescrever o text
 - Preserve a profundidade necessária, mas não expanda artificialmente o material; explique ou exemplifique somente quando isso aumentar a compreensão
 - O TÍTULO DO MATERIAL, quando estiver na primeira linha no formato \`@@ Título\` ou \`@@@ Título\`, é metadado imutável: reproduza essa linha literalmente, sem corrigir ortografia, capitalização, pontuação, siglas ou palavras.
 - Esta preservação literal aplica-se somente ao título do material marcado por \`@@\`/\`@@@\`; não se aplica a subtítulos nem a seções Markdown.
+- Quando o material iniciar com \`# Título\`, reproduza essa primeira linha literalmente. Não use \`@@\` nem \`@@@\` em arquivos cujo título de entrada use \`#\`.
 - Os títulos de seções previstos no sumário podem receber correção ortográfica e capitalização editorial. Preserve siglas e abreviações em sua forma canônica, como CIDE, ICMS, ISS, NBC TA, TI, RT e FRF.
 
 ### 🔤 SIGLAS
