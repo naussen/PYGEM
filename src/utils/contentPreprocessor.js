@@ -133,7 +133,10 @@ function normalizeAuditoriaDocumentTitle(content, fileName) {
 }
 
 function finalizeRewrittenContent(rewritten, prepared) {
-    const normalized = normalizeInlineTopicMarkers(rewritten);
+    const normalized = normalizeInlineTopicMarkers(rewritten)
+        .split(/\r?\n/)
+        .filter((line, index) => index === 0 || !/^#\s+(?:unidade\s+\d+(?:\s+de\s+\d+)?|título)\s*$/i.test(line.trim()))
+        .join('\n');
     const titlePreserved = restoreOriginalDocumentTitle(
         normalized,
         prepared.originalDocumentTitleLine
