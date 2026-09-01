@@ -1158,8 +1158,11 @@ const geminiService = {
 
             assertSourceHeadingCoverage(content, finalContent);
 
+            const visualReadyContent = options.visualTopics?.length > 0
+                ? appendRequiredVisualFallback(finalContent, options.visualTopics)
+                : finalContent;
             if (options.visualTopics?.length > 0) {
-                const compliance = validateVisualCompliance(finalContent, {
+                const compliance = validateVisualCompliance(visualReadyContent, {
                     visualTopics: options.visualTopics,
                 });
                 if (!compliance.valid) {
@@ -1180,7 +1183,7 @@ const geminiService = {
                 checkpoint?.clear();
             }
 
-            return finalContent;
+            return visualReadyContent;
 
         } catch (error) {
             logger.error(`Erro geral no processamento em blocos: ${error.message}`);
