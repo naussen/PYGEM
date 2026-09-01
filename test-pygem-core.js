@@ -51,7 +51,8 @@ assert.strictEqual(
 );
 assert.strictEqual(isOutputTooShort('a'.repeat(1000), 'a'.repeat(350)), true);
 assert.strictEqual(isOutputTooShort('a'.repeat(1000), 'a'.repeat(650)), false);
-assert.strictEqual(isOutputTooLong('a'.repeat(100), 'a'.repeat(301), 3), true);
+assert.strictEqual(isOutputTooLong('a'.repeat(100), 'a'.repeat(301), 3), false);
+assert.strictEqual(isOutputTooLong('a'.repeat(1000), 'a'.repeat(3001), 3), true);
 assert.strictEqual(isOutputTooLong('a'.repeat(100), 'a'.repeat(300), 3), false);
 assert.strictEqual(isOutputTooLong('a'.repeat(1000), 'a'.repeat(4000)), false);
 assert.strictEqual(

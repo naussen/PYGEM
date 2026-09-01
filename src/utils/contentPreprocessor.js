@@ -184,7 +184,9 @@ function sanitizeModelOutput(text) {
         }
     }
 
-    return cleaned;
+    return cleaned
+        .replace(/^(#{1,6}\s+)@@@?\s*/gm, '$1')
+        .replace(/^#\s+Unidade\s+\d+(?:\s+de\s+\d+)?\s*$/gmi, '');
 }
 
 function isOutputTooShort(original, rewritten, minRatio = 0.4) {
@@ -199,6 +201,7 @@ function isOutputTooLong(original, rewritten, maxRatio = 6) {
     if (!original || !rewritten) return false;
     const originalLen = original.replace(/\s+/g, ' ').length;
     const rewrittenLen = rewritten.replace(/\s+/g, ' ').length;
+    if (originalLen < 800) return false;
     return rewrittenLen > originalLen * maxRatio;
 }
 
