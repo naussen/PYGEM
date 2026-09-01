@@ -149,7 +149,7 @@ async function runIntegrationTest() {
     const unmappedPath = path.join(inputDirectory, '002_sem-mapa_reescrito.md');
     const failedPath = path.join(inputDirectory, '003_falha-visual_reescrito.md');
     const mappedSource = [
-        '@@ Conceitos básicos',
+        '# Conceitos básicos',
         '',
         'O patrimônio é o objeto da contabilidade e representa bens, direitos e obrigações.',
         '',
@@ -157,10 +157,10 @@ async function runIntegrationTest() {
         '',
         'A contabilidade registra e apresenta informações patrimoniais.',
     ].join('\n');
-    const unmappedBytes = Buffer.from('\uFEFF@@ Material sem mapa\r\n\r\nConteúdo preservado.', 'utf8');
+    const unmappedBytes = Buffer.from('\uFEFF# Material sem mapa\r\n\r\nConteúdo preservado.', 'utf8');
     fs.writeFileSync(mappedPath, mappedSource, 'utf8');
     fs.writeFileSync(unmappedPath, unmappedBytes);
-    fs.writeFileSync(failedPath, '@@ Falha visual\n\nConteúdo que deve ser preservado.', 'utf8');
+    fs.writeFileSync(failedPath, '# Falha visual\n\nConteúdo que deve ser preservado.', 'utf8');
     fs.writeFileSync(
         path.join(visualDirectory, '001_prompt-visual.md'),
         '@@ ### **Conceitos básicos**\n\nUsar uma tabela comparativa.',
@@ -199,7 +199,7 @@ async function runIntegrationTest() {
     );
     assert.strictEqual(
         fs.readFileSync(path.join(outputDirectory, '003_falha-visual_reescrito.md'), 'utf8'),
-        '@@ Falha visual\n\nConteúdo que deve ser preservado.',
+        '# Falha visual\n\nConteúdo que deve ser preservado.',
         'Falha de fragmento deve publicar somente uma cópia intacta'
     );
         const mappedOutput = fs.readFileSync(
