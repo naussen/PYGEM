@@ -1,5 +1,12 @@
 # Changelog
 
+## 2026-09-01 — robustez editorial e visual do pipeline jurídico
+
+- preserva títulos Markdown canônicos e remove marcadores técnicos gerados durante a recomposição;
+- recupera recursos visuais obrigatórios ausentes e limita excessos conforme o plano validado;
+- remove metadados físicos de títulos canônicos do plano visual;
+- normaliza títulos `##` duplicados ou consecutivos e corrige o erro editorial `Direitorias` antes da publicação.
+
 ## 2026-08-28 — origem obrigatória de flashcards
 
 - impede a criação de flashcards sem questão identificada das bancas CESPE/CEBRASPE, FCC ou FGV, com metadados verificáveis e situação não anulada.

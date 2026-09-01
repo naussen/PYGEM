@@ -66,6 +66,14 @@ assert.strictEqual(
     normalizeUppercaseHeadings('## OPINIÃO DO AUDITOR (NBC TA)\n\nTexto.'),
     '## Opinião do Auditor (NBC TA)\n\nTexto.'
 );
+assert.strictEqual(
+    normalizeUppercaseHeadings('## Administração\n## Crimes particulares\n\nTexto.\n## Disposições Comuns\n\nA.\n## Disposições Comuns\n\nB.'),
+    '## Administração\n### Crimes particulares\n\nTexto.\n## Disposições Comuns\n\nA.\n### Disposições Comuns\n\nB.'
+);
+assert.strictEqual(
+    normalizeUppercaseHeadings('## Direitorias\n\nAs direitorias executam atividades.'),
+    '## Diretorias\n\nAs diretorias executam atividades.'
+);
 
 const originalDocumentTitle = '@@@ LEI de Introdução: LINDB (ORIGINAL)';
 const auditoriaSource = '@@ AU DIT ORIA INT ERN A (N B C TI 01 )\n\nResumo.';

@@ -1172,7 +1172,7 @@ const geminiService = {
                 }
             }
 
-            const finalContent = rewrittenBlocks.join('\n\n');
+            const finalContent = normalizeUppercaseHeadings(rewrittenBlocks.join('\n\n'));
 
             console.log(`\n📊 Resumo do processamento para ${fileName}:`);
             console.log(`   ✅ Blocos processados: ${processedBlocks}/${blocks.length}`);

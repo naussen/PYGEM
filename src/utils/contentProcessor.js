@@ -39,11 +39,43 @@ function normalizeEditorialHeadingTitle(title) {
 }
 
 function normalizeUppercaseHeadings(content) {
-    return String(content || '').split('\n').map((line) => {
+    const normalizedLines = String(content || '')
+        .replace(/\bDireitorias\b/g, 'Diretorias')
+        .replace(/\bdireitorias\b/g, 'diretorias')
+        .split('\n').map((line) => {
         const match = line.match(/^(\s*#{1,6}\s+)(.+?)(\s*#*\s*)$/);
         if (!match || !isPredominantlyUppercaseTitle(match[2])) return line;
         return `${match[1]}${normalizeEditorialHeadingTitle(match[2])}${match[3]}`;
-    }).join('\n');
+    });
+
+    const seenLevelTwoTitles = new Set();
+    normalizedLines.forEach((line, index) => {
+        const match = line.match(/^(\s*)##(?!#)\s+(.+?)\s*$/);
+        if (!match) return;
+        const key = match[2]
+            .normalize('NFD')
+            .replace(/[\u0300-\u036f]/g, '')
+            .toLocaleLowerCase('pt-BR')
+            .replace(/\s+/g, ' ')
+            .trim();
+        if (seenLevelTwoTitles.has(key)) {
+            normalizedLines[index] = `${match[1]}### ${match[2]}`;
+            return;
+        }
+        seenLevelTwoTitles.add(key);
+    });
+
+    normalizedLines.forEach((line, index) => {
+        if (!/^\s*##(?!#)\s+\S/.test(line)) return;
+        const nextIndex = normalizedLines.findIndex((candidate, candidateIndex) => (
+            candidateIndex > index && candidate.trim()
+        ));
+        if (nextIndex >= 0 && /^\s*##(?!#)\s+\S/.test(normalizedLines[nextIndex])) {
+            normalizedLines[nextIndex] = normalizedLines[nextIndex].replace(/^(\s*)##\s+/, '$1### ');
+        }
+    });
+
+    return normalizedLines.join('\n');
 }
 
 /**
