@@ -110,6 +110,13 @@ function normalizeInlineTopicMarkers(content) {
     );
 }
 
+function stripStandaloneTechnicalMarkers(content) {
+    return String(content || '')
+        .replace(/^[ \t]*@@@[ \t]*(?:\r?\n|$)/gm, '')
+        .replace(/\n{3,}/g, '\n\n')
+        .trim();
+}
+
 function normalizeAuditoriaDocumentTitle(content, fileName) {
     const canonicalTitle = AUDITORIA_DOCUMENT_TITLES.get(fileName);
     if (!canonicalTitle) return String(content || '');
@@ -297,6 +304,7 @@ module.exports = {
     extractOriginalDocumentTitleLine,
     restoreOriginalDocumentTitle,
     normalizeInlineTopicMarkers,
+    stripStandaloneTechnicalMarkers,
     extractImageDefinitions,
     restoreImageDefinitions,
     sanitizeModelOutput,

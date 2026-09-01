@@ -5,6 +5,7 @@ const {
     isOutputTooShort,
     isOutputTooLong,
     normalizeInlineTopicMarkers,
+    stripStandaloneTechnicalMarkers,
     getBlockPrompt,
     detectRepetitionLoop,
     prepareContentForRewrite,
@@ -78,6 +79,10 @@ assert.strictEqual(
         prepareContentForRewrite('@@ Título desformatado\n\nTexto.', 'outro.md')
     ),
     '@@ Título desformatado\n\nTexto.'
+);
+assert.strictEqual(
+    stripStandaloneTechnicalMarkers('@@@\n## Empresa e Empresário\n\nTexto.'),
+    '## Empresa e Empresário\n\nTexto.'
 );
 const markdownTitleSource = '# Direito de Empresa\n\n## Empresa e Empresário\n\nTexto.';
 assert.strictEqual(

@@ -10,6 +10,7 @@ const {
     detectRepetitionLoop,
     extractFinishReason,
     getBlockPrompt,
+    stripStandaloneTechnicalMarkers,
 } = require('../utils/contentPreprocessor');
 const {
     validateGeneratedContent,
@@ -705,7 +706,10 @@ async function generateValidatedRewrite(content, prompt, options = {}) {
                 usageMetadata,
             };
         } else {
-            const normalizedAccumulated = normalizeUppercaseHeadings(accumulated);
+            const sourceUsesTechnicalMarkers = /^\s*@@@?/m.test(content);
+            const normalizedAccumulated = normalizeUppercaseHeadings(
+                sourceUsesTechnicalMarkers ? accumulated : stripStandaloneTechnicalMarkers(accumulated)
+            );
             const outputValidation = validateGeneratedContent(normalizedAccumulated, {
                 sourceMarkdown: content,
             });
