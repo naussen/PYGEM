@@ -1,5 +1,10 @@
 # Changelog
 
+## 2026-09-01 — hierarquia de títulos reescritos
+
+- remove o H1 canônico duplicado e rebaixa H1s internos para `##`, preservando uma única raiz documental;
+- recompõe o artefato OCR `Apose Ntadoria` antes da validação estrutural.
+
 ## 2026-09-01 — robustez editorial e visual do pipeline jurídico
 
 - preserva títulos Markdown canônicos e remove marcadores técnicos gerados durante a recomposição;
