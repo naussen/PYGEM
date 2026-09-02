@@ -74,10 +74,6 @@ assert.strictEqual(
     normalizeUppercaseHeadings('## Direitorias\n\nAs direitorias executam atividades.'),
     '## Diretorias\n\nAs diretorias executam atividades.'
 );
-assert.strictEqual(
-    normalizeUppercaseHeadings('# Título\n\n# Título\n\n# Subseção\n\nApose Ntadoria.'),
-    '# Título\n\n\n\n## Subseção\n\nAposentadoria.'
-);
 
 const originalDocumentTitle = '@@@ LEI de Introdução: LINDB (ORIGINAL)';
 const auditoriaSource = '@@ AU DIT ORIA INT ERN A (N B C TI 01 )\n\nResumo.';

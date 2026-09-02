@@ -42,31 +42,10 @@ function normalizeUppercaseHeadings(content) {
     const normalizedLines = String(content || '')
         .replace(/\bDireitorias\b/g, 'Diretorias')
         .replace(/\bdireitorias\b/g, 'diretorias')
-        .replace(/\bApose\s+Ntadoria\b/g, 'Aposentadoria')
         .split('\n').map((line) => {
         const match = line.match(/^(\s*#{1,6}\s+)(.+?)(\s*#*\s*)$/);
         if (!match || !isPredominantlyUppercaseTitle(match[2])) return line;
         return `${match[1]}${normalizeEditorialHeadingTitle(match[2])}${match[3]}`;
-        });
-
-    let documentHeadingKey = null;
-    normalizedLines.forEach((line, index) => {
-        const match = line.match(/^(\s*)#(?!#)\s+(.+?)\s*$/);
-        if (!match) return;
-
-        const key = match[2]
-            .normalize('NFD')
-            .replace(/[\u0300-\u036f]/g, '')
-            .toLocaleLowerCase('pt-BR')
-            .replace(/\s+/g, ' ')
-            .trim();
-        if (!documentHeadingKey) {
-            documentHeadingKey = key;
-            return;
-        }
-        normalizedLines[index] = key === documentHeadingKey
-            ? ''
-            : `${match[1]}## ${match[2]}`;
     });
 
     const seenLevelTwoTitles = new Set();
