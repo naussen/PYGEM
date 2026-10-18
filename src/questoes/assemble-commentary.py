@@ -3,6 +3,7 @@
 
 import argparse
 import collections
+import hashlib
 import json
 import re
 from pathlib import Path
@@ -109,6 +110,12 @@ def main():
                            if result["status"] == "comentada" and key not in pro_audit)
     if missing_audit:
         raise ValueError(f"Auditoria Pro incompleta: {len(missing_audit)} IDs, exemplo {missing_audit[:5]}")
+    stale_audit = sorted(key for key, (result, _) in reviewed.items()
+                         if result["status"] == "comentada" and
+                         pro_audit[key].get("comment_sha256") != hashlib.sha256(
+                             result["comment_markdown"].encode("utf-8")).hexdigest())
+    if stale_audit:
+        raise ValueError(f"Auditoria Pro obsoleta: {len(stale_audit)} IDs, exemplo {stale_audit[:5]}")
 
     counts = collections.Counter()
     holds = []

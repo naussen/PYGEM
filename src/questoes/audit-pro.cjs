@@ -49,6 +49,15 @@ function parseResponse(value) {
     return data.items;
 }
 
+function statementForReview(q) {
+    if (!q.external_id.startsWith('pdf:dpf14_009_01:')) return q.statement_markdown;
+    const parts = q.statement_markdown.split(/\s+JUSTIFICATIVA\s+[–—-]\s+/u);
+    if (parts.length !== 2 || !parts[0].trim() || !parts[1].trim()) {
+        throw new Error(`Justificativa oficial não separável: ${q.external_id}`);
+    }
+    return parts[0].trimEnd();
+}
+
 async function check(items) {
     const prompt = [
         'Revise RIGOROSAMENTE cada comentário de questão brasileira como auditor independente, em 18/10/2026. Pesquise na internet, preferindo legislação, atos normativos e gabaritos oficiais. Confira cada artigo/parágrafo/inciso e URL citados, sua vigência atual, eventuais revogações, ressalvas, respostas e contas. Detecte afirmações não demonstradas, extrapolações, erro de cálculo, comentários sobre questão anulada/duvidosa, falta de aviso 🔴 para norma antiga, linguagem pessoal e ausência de imagem de cálculo quando há contas. Não aceite citações só porque parecem plausíveis. Se não conseguir verificar uma afirmação essencial, approve=false. Responda apenas JSON válido: {"items":[{"id":"...","approve":true,"reason":"...","needs_red_update":false,"official_urls":["..."]}]}. Um resultado para cada ID.',
@@ -121,16 +130,19 @@ async function main() {
                     const q = original.get(result.external_id);
                     if (!q) throw new Error(`Origem ausente: ${result.external_id}`);
                     return { id: result.external_id, disciplina: q.subject, ano: q.exam_year,
-                        enunciado: q.statement_markdown, alternativas: q.options,
+                        enunciado: statementForReview(q), alternativas: q.options,
                         gabarito: result.correct_option_label, comentario: result.comment_markdown,
                         dispositivo: result.legal_basis, alerta: result.outdated_notice,
                         calculo: result.calculation_steps, imagem_calculo: result.calculation_image || null };
                 });
                 const hash = crypto.createHash('sha256').update(JSON.stringify(source)).digest('hex');
+                const commentHashes = new Map(source.map(item => [item.id,
+                    crypto.createHash('sha256').update(item.comentario).digest('hex')]));
                 const file = path.join(auditDir, group, `${name.slice(0, 4)}_${String(i + 1).padStart(2, '0')}.json`);
                 if (fs.existsSync(file)) {
                     const saved = JSON.parse(fs.readFileSync(file, 'utf8'));
-                    if (saved.input_sha256 === hash) {
+                    if (saved.input_sha256 === hash && saved.items?.length === source.length && saved.items.every(item =>
+                        item.comment_sha256 === commentHashes.get(item.id))) {
                         console.log(`${group}/${name} item ${i + 1}: já auditado`);
                         continue;
                     }
@@ -139,7 +151,8 @@ async function main() {
                 }
                 const result = await checkPartitioned(source);
                 atomicJson(file, { schema_version: 'pro-questions/audit-pro/v1', model,
-                    input_sha256: hash, batch: `${group}/${name}`, ...result });
+                    input_sha256: hash, batch: `${group}/${name}`, ...result,
+                    items: result.items.map(item => ({ ...item, comment_sha256: commentHashes.get(item.id) })) });
                 console.log(`${group}/${name} item ${i + 1}: ${result.items.filter(item => item.approve).length}/${source.length} aprovados`);
             }
         }
