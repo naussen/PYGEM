@@ -1,5 +1,11 @@
 # Changelog
 
+## 2026-10-18 — comentários de questões por Vertex AI
+
+- adiciona geração em lotes de dez questões, com triagem sem gabarito, comentário PYGEM e revisão independente;
+- preserva checkpoints por etapa, reconciliação de gabaritos definitivos e retenção de itens duvidosos;
+- cria imagens PNG para memória de cálculo e bloqueia a montagem dos JSONs do site até a cobertura integral e auditoria adicional.
+
 ## 2026-08-28 — recuperação explícita de quebras HTML inválidas
 
 - instrui a nova tentativa a substituir `<br>` e `<br/>` por quebras Markdown, mantendo a rejeição estrutural de HTML fora de Mermaid;
