@@ -7,6 +7,7 @@
 - cria imagens PNG para memória de cálculo e bloqueia a montagem dos JSONs do site até a cobertura integral e auditoria adicional.
 - separa a justificativa oficial dos 120 enunciados da prova PF 2014 nas entradas de revisão e nas cópias para o site; invalida checkpoints antigos dessa prova para impedir vazamento do gabarito.
 - vincula a auditoria Pro ao texto exato do comentário e remove a justificativa oficial também da entrada do auditor.
+- bloqueia qualquer outro enunciado que contenha o marcador de justificativa oficial ainda não tratado.
 
 ## 2026-08-28 — recuperação explícita de quebras HTML inválidas
 

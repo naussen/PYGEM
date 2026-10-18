@@ -34,6 +34,8 @@ def expected_batches(root, counts):
 
 def clean_statement(question):
     if not question["external_id"].startswith("pdf:dpf14_009_01:"):
+        if re.search(r"\bJUSTIFICATIVA\s+[–—-]\s+", question["statement_markdown"]):
+            raise ValueError(f"Justificativa oficial não tratada: {question['external_id']}")
         return
     parts = re.split(r"\s+JUSTIFICATIVA\s+[–—-]\s+", question["statement_markdown"])
     if len(parts) != 2 or not all(part.strip() for part in parts):

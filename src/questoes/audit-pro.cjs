@@ -50,7 +50,12 @@ function parseResponse(value) {
 }
 
 function statementForReview(q) {
-    if (!q.external_id.startsWith('pdf:dpf14_009_01:')) return q.statement_markdown;
+    if (!q.external_id.startsWith('pdf:dpf14_009_01:')) {
+        if (/\bJUSTIFICATIVA\s+[–—-]\s+/u.test(q.statement_markdown)) {
+            throw new Error(`Justificativa oficial não tratada: ${q.external_id}`);
+        }
+        return q.statement_markdown;
+    }
     const parts = q.statement_markdown.split(/\s+JUSTIFICATIVA\s+[–—-]\s+/u);
     if (parts.length !== 2 || !parts[0].trim() || !parts[1].trim()) {
         throw new Error(`Justificativa oficial não separável: ${q.external_id}`);
