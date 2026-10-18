@@ -9,6 +9,7 @@
 - vincula a auditoria Pro ao texto exato do comentário e remove a justificativa oficial também da entrada do auditor.
 - bloqueia qualquer outro enunciado que contenha o marcador de justificativa oficial ainda não tratado.
 - recalcula o hash de procedência quando a separação do enunciado ou a reconciliação do gabarito modifica o conteúdo, preservando o hash anterior nos metadados.
+- valida todos os documentos de saída antes de gravar as cópias de importação, evitando publicação parcial por erro de conteúdo.
 
 ## 2026-08-28 — recuperação explícita de quebras HTML inválidas
 

@@ -133,6 +133,7 @@ def main():
     counts = collections.Counter()
     holds = []
     output_files = []
+    output_documents = []
     for file in originals:
         data = load(file)
         for question in data["questions"]:
@@ -194,8 +195,11 @@ def main():
         for question in data["questions"]:
             refresh_source_hash(question)
         target = root / "arquivos_site" / file.name
-        save(target, data)
+        output_documents.append((target, data))
         output_files.append(str(target))
+
+    for target, data in output_documents:
+        save(target, data)
 
     report = {
         "total_questions": len(all_questions),
