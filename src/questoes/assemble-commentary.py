@@ -44,6 +44,17 @@ def clean_statement(question):
     question["source_metadata"]["statement_cleanup"] = "justificativa_oficial_separada_v1"
 
 
+def refresh_source_hash(question):
+    content = {"statement": question["statement_markdown"], "options": question["options"],
+               "answer": question["correct_option_label"]}
+    digest = hashlib.sha256(json.dumps(content, sort_keys=True, ensure_ascii=False)
+                            .encode("utf-8")).hexdigest()
+    if digest != question["source_content_hash"]:
+        question["source_metadata"].setdefault("original_source_content_hash",
+                                                question["source_content_hash"])
+        question["source_content_hash"] = digest
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("input_dir", type=Path)
@@ -180,6 +191,8 @@ def main():
                 counts["retida"] += 1
                 holds.append({"external_id": key, "reason": result.get("hold_reason")})
             question["import_ready"] = False
+        for question in data["questions"]:
+            refresh_source_hash(question)
         target = root / "arquivos_site" / file.name
         save(target, data)
         output_files.append(str(target))
