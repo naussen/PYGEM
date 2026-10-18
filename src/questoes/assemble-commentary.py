@@ -4,6 +4,7 @@
 import argparse
 import collections
 import json
+import re
 from pathlib import Path
 
 
@@ -30,6 +31,16 @@ def expected_batches(root, counts):
     return issues
 
 
+def clean_statement(question):
+    if not question["external_id"].startswith("pdf:dpf14_009_01:"):
+        return
+    parts = re.split(r"\s+JUSTIFICATIVA\s+[–—-]\s+", question["statement_markdown"])
+    if len(parts) != 2 or not all(part.strip() for part in parts):
+        raise ValueError(f"Justificativa oficial não separável: {question['external_id']}")
+    question["statement_markdown"] = parts[0].rstrip()
+    question["source_metadata"]["statement_cleanup"] = "justificativa_oficial_separada_v1"
+
+
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("input_dir", type=Path)
@@ -53,6 +64,9 @@ def main():
         data = load(file)
         if len(data["questions"]) > 10:
             raise ValueError(f"Lote com mais de 10 itens: {file}")
+        if any(item["external_id"].startswith("pdf:dpf14_009_01:")
+               for item in data["questions"]) and data.get("statement_cleaned") is not True:
+            raise ValueError(f"Lote PF 2014 gerado com justificativa no enunciado: {file}")
         for item in data["questions"]:
             key = item["external_id"]
             if key in reviewed:
@@ -102,6 +116,7 @@ def main():
     for file in originals:
         data = load(file)
         for question in data["questions"]:
+            clean_statement(question)
             key = question["external_id"]
             result_pair = reviewed.get(key)
             if not result_pair:

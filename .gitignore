@@ -27,6 +27,8 @@ tmp/
 
 # Dependências Node.js
 node_modules/
+__pycache__/
+*.pyc
 .npm-cache/
 npm-debug.log*
 yarn-debug.log*

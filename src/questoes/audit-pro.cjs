@@ -130,9 +130,12 @@ async function main() {
                 const file = path.join(auditDir, group, `${name.slice(0, 4)}_${String(i + 1).padStart(2, '0')}.json`);
                 if (fs.existsSync(file)) {
                     const saved = JSON.parse(fs.readFileSync(file, 'utf8'));
-                    if (saved.input_sha256 !== hash) throw new Error(`Auditoria obsoleta: ${file}`);
-                    console.log(`${group}/${name} item ${i + 1}: já auditado`);
-                    continue;
+                    if (saved.input_sha256 === hash) {
+                        console.log(`${group}/${name} item ${i + 1}: já auditado`);
+                        continue;
+                    }
+                    fs.renameSync(file, `${file}.stale-${Date.now()}`);
+                    console.error(`Auditoria obsoleta preservada: ${group}/${name} item ${i + 1}`);
                 }
                 const result = await checkPartitioned(source);
                 atomicJson(file, { schema_version: 'pro-questions/audit-pro/v1', model,

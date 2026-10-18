@@ -13,6 +13,8 @@ const outputDir = process.argv[3];
 const onlyBatch = process.argv.includes('--batch') ? Number(process.argv[process.argv.indexOf('--batch') + 1]) : null;
 const reconciliationFile = process.argv.includes('--reconciled') ? process.argv[process.argv.indexOf('--reconciled') + 1] : null;
 const revalidate = process.argv.includes('--revalidate');
+const onlyExistingFinal = process.argv.includes('--only-existing-final');
+if (onlyExistingFinal && !revalidate) throw new Error('--only-existing-final exige --revalidate');
 const group = process.argv.includes('--group') ? process.argv[process.argv.indexOf('--group') + 1] : null;
 if (group && !/^[a-z0-9_-]+$/i.test(group)) throw new Error('Grupo inválido');
 const shardOption = process.argv.includes('--shard') ? process.argv[process.argv.indexOf('--shard') + 1] : null;
@@ -54,13 +56,22 @@ function parseResponse(text) {
     return parsed;
 }
 
+function statementForReview(q) {
+    if (!q.external_id.startsWith('pdf:dpf14_009_01:')) return q.statement_markdown;
+    const parts = q.statement_markdown.split(/\s+JUSTIFICATIVA\s+[–—-]\s+/u);
+    if (parts.length !== 2 || !parts[0].trim() || !parts[1].trim()) {
+        throw new Error(`Justificativa oficial não separável: ${q.external_id}`);
+    }
+    return parts[0].trimEnd();
+}
+
 function sourceQuestion(q, includeKey) {
     return {
         id: q.external_id,
         disciplina: q.subject,
         ano: q.exam_year,
         banca: q.exam_board,
-        enunciado: q.statement_markdown,
+        enunciado: statementForReview(q),
         alternativas: q.options.map(o => ({ label: o.label, text: o.body_markdown })),
         ...(includeKey ? { gabarito: q.correct_option_label } : {}),
     };
@@ -184,7 +195,7 @@ function normalizedContent(value, q, auditNotice) {
 function validComment(value, q) {
     const comment = String(value?.comment_markdown || '').trim();
     if (comment.length < 140 || comment.length > 6000) return 'comentario_ausente_ou_tamanho_invalido';
-    if (/\bvoc[eê]\b|\b(?:podemos|devemos|temos|obtemos|sabemos|observamos|verificamos|conclu[ií]mos|notamos|percebemos)\b|\b(?:[eé]|seria|parece|torna-se)\s+(?:f[aá]cil|dif[ií]cil|complex[oa])\b/i.test(comment)) return 'linguagem_inadequada';
+    if (/\bvoc[eê]\b|\b(?:podemos|devemos|temos|obtemos|sabemos|observamos|verificamos|conclu[ií]mos|notamos|percebemos|considere|observe|veja|note)\b|\b(?:[eé]|seria|parece|torna-se)\s+(?:f[aá]cil|dif[ií]cil|complex[oa])\b/i.test(comment)) return 'linguagem_inadequada';
     if (legalSubject(q.subject) && !value?.legal_basis) return 'dispositivo_legal_ausente';
     if (value?.legal_basis && !/dispositivo legal/i.test(comment)) return 'dispositivo_legal_ausente';
     if (value?.legal_basis && !/^https?:\/\/[^/]+\.(?:gov\.br|jus\.br|leg\.br|mp\.br)(?:\/|$)/i.test(value.legal_basis.official_url || '')) return 'fonte_legal_nao_oficial';
@@ -194,9 +205,13 @@ function validComment(value, q) {
 }
 
 async function stage(file, prompt, grounded, selectedModel = model, deepReview = false, expected = null) {
+    const promptHash = crypto.createHash('sha256').update(prompt).digest('hex');
+    const requiresCleanInput = expected?.some(q => q.external_id.startsWith('pdf:dpf14_009_01:'));
     if (fs.existsSync(file)) {
         const saved = readJson(file);
         try {
+            if (saved.prompt_sha256 && saved.prompt_sha256 !== promptHash) throw new Error('prompt alterado');
+            if (requiresCleanInput && saved.prompt_sha256 !== promptHash) throw new Error('checkpoint anterior contém justificativa no enunciado');
             if (expected) indexItems(saved, expected);
             return saved;
         } catch (error) {
@@ -204,8 +219,10 @@ async function stage(file, prompt, grounded, selectedModel = model, deepReview =
             console.error(`Checkpoint inconsistente preservado: ${path.basename(file)} (${error.message})`);
         }
     }
+    if (onlyExistingFinal) throw new Error(`Checkpoint ausente para validação local: ${path.basename(file)}`);
     const output = await callVertexPartitioned(prompt, grounded, selectedModel, deepReview);
     if (expected) indexItems(output, expected);
+    output.prompt_sha256 = promptHash;
     atomicJson(file, output);
     return output;
 }
@@ -213,7 +230,8 @@ async function stage(file, prompt, grounded, selectedModel = model, deepReview =
 async function processBatch(number, questions) {
     const prefix = path.join(batchDir, String(number).padStart(4, '0'));
     const finalFile = `${prefix}.json`;
-    const inputHash = crypto.createHash('sha256').update(JSON.stringify(questions)).digest('hex');
+    const cleanPf = questions.some(q => q.external_id.startsWith('pdf:dpf14_009_01:'));
+    const inputHash = crypto.createHash('sha256').update(JSON.stringify(questions) + (cleanPf ? '|pf_statement_sanitized_v1' : '')).digest('hex');
     if (fs.existsSync(finalFile) && !revalidate) {
         const existing = readJson(finalFile);
         if (existing.input_sha256 !== inputHash) throw new Error(`Entrada mudou após geração do lote ${number}`);
@@ -248,6 +266,7 @@ async function processBatch(number, questions) {
         schema_version: 'pro-questions/commentary-review/v1',
         batch: number,
         input_sha256: inputHash,
+        statement_cleaned: cleanPf,
         model,
         review_model: reviewModel,
         usage_metadata: [initial, generation, review].map(stageResult => stageResult.usage_metadata || null),
@@ -310,6 +329,7 @@ async function main() {
     for (let index = 0; index < batches.length; index += 1) {
         if (onlyBatch && onlyBatch !== index + 1) continue;
         if (shardParts && index % shardParts[1] !== shardParts[0] - 1) continue;
+        if (onlyExistingFinal && !fs.existsSync(path.join(batchDir, `${String(index + 1).padStart(4, '0')}.json`))) continue;
         const result = await processBatch(index + 1, batches[index]);
         const counts = { comentada: 0, revisar_sem_comentario: 0 };
         for (const item of result.questions) counts[item.status] += 1;
